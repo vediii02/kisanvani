@@ -1,0 +1,26 @@
+"""
+Revision ID: 20260124_create_farmer_queries_table
+Revises: 
+Create Date: 2026-01-24
+"""
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade():
+    op.create_table(
+        'farmer_queries',
+        sa.Column('id', sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column('call_session_id', sa.BigInteger(), nullable=False),
+        sa.Column('farmer_id', sa.BigInteger(), nullable=True),
+        sa.Column('organisation_id', sa.BigInteger(), nullable=False),
+        sa.Column('question', sa.Text(), nullable=False),
+        sa.Column('answer', sa.Text(), nullable=False),
+        sa.Column('intent', sa.String(50), nullable=True),
+        sa.Column('created_at', sa.DateTime(), server_default=sa.text('CURRENT_TIMESTAMP')),
+        sa.Index('ix_call_session_id', 'call_session_id'),
+        sa.Index('ix_farmer_id', 'farmer_id'),
+        sa.Index('ix_organisation_id', 'organisation_id'),
+    )
+
+def downgrade():
+    op.drop_table('farmer_queries')

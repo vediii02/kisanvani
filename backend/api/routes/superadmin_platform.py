@@ -1,0 +1,1173 @@
+"""
+Super Admin API Routes - Platform Management
+Only accessible to users with role='superadmin'
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, and_, or_, desc, text
+from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel
+
+from core.auth import get_current_super_admin
+from db.session import get_db
+from db.models.user import User
+from db.models.organisation import Organisation
+from db.models.brand import Brand
+from db.models.product import Product
+from db.models.audit import AuditLog, PlatformConfig, BannedProduct
+from db.models.call_session import CallSession
+from services.website_scraper import scraper
+
+router = APIRouter()
+
+
+# ===== Pydantic Schemas =====
+
+class DashboardKPIs(BaseModel):
+    total_organisations: int
+    active_organisations: int
+    total_brands: int
+    total_products: int
+    active_phone_numbers: int
+    total_calls_today: int
+    total_calls_month: int
+    live_calls_count: int
+    escalated_cases_count: int
+    avg_ai_confidence: float
+    total_users: int
+    total_kb_entries: int
+
+
+class OrganisationStats(BaseModel):
+    id: int
+    name: str
+    status: str
+    is_active: bool
+    brand_count: int
+    product_count: int
+    call_count: int
+    phone_count: int
+    phone_numbers: List[str]
+    created_at: str
+
+
+class CallAnalytics(BaseModel):
+    total_calls: int
+    avg_duration_seconds: float
+    ai_resolution_rate: float
+    human_resolution_rate: float
+    top_crops: List[dict]
+    top_problems: List[dict]
+    calls_by_hour: List[dict]
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    username: str
+    user_role: str
+    action_type: str
+    action_category: str
+    description: str
+    entity_type: Optional[str]
+    entity_id: Optional[int]
+    organisation_id: Optional[int]
+    severity: str
+    created_at: str
+    
+    class Config:
+        from_attributes = True
+
+
+class PlatformConfigResponse(BaseModel):
+    ai_confidence_threshold: int
+    max_call_duration_minutes: int
+    default_language: str
+    stt_provider: str
+    tts_provider: str
+    llm_model: str
+    rag_strictness_level: str
+    rag_min_confidence: int
+    force_kb_approval: bool
+    enable_call_recording: bool
+    enable_auto_escalation: bool
+    trial_duration_days: int
+    max_concurrent_calls: int
+    updated_at: Optional[str]
+
+
+class PlatformConfigUpdate(BaseModel):
+    ai_confidence_threshold: Optional[int] = None
+    max_call_duration_minutes: Optional[int] = None
+    default_language: Optional[str] = None
+    stt_provider: Optional[str] = None
+    tts_provider: Optional[str] = None
+    llm_model: Optional[str] = None
+    rag_strictness_level: Optional[str] = None
+    rag_min_confidence: Optional[int] = None
+    force_kb_approval: Optional[bool] = None
+    enable_call_recording: Optional[bool] = None
+    enable_auto_escalation: Optional[bool] = None
+    trial_duration_days: Optional[int] = None
+    max_concurrent_calls: Optional[int] = None
+
+
+# ===== Helper Functions =====
+
+async def create_audit_log(
+    db: AsyncSession,
+    user: User,
+    action_type: str,
+    action_category: str,
+    description: str,
+    entity_type: str = None,
+    entity_id: int = None,
+    organisation_id: int = None,
+    old_value: dict = None,
+    new_value: dict = None,
+    severity: str = "info",
+    request: Request = None
+):
+    """Create an audit log entry"""
+    audit = AuditLog(
+        user_id=user.id,
+        username=user.username,
+        user_role=user.role,
+        action_type=action_type,
+        action_category=action_category,
+        description=description,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        organisation_id=organisation_id,
+        old_value=old_value,
+        new_value=new_value,
+        severity=severity,
+        ip_address=request.client.host if request else None,
+        user_agent=request.headers.get("user-agent") if request else None
+    )
+    db.add(audit)
+    await db.commit()
+    return audit
+
+
+# ===== Dashboard KPIs =====
+
+@router.get("/dashboard/kpis", response_model=DashboardKPIs)
+async def get_dashboard_kpis(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    organisation_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get real-time platform-level KPIs"""
+    
+    # Date range
+    today = datetime.now(timezone.utc).date()
+    month_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
+    
+    # Total organisations
+    org_result = await db.execute(select(func.count(Organisation.id)))
+    total_orgs = org_result.scalar() or 0
+    
+    # Active organisations
+    active_org_result = await db.execute(
+        select(func.count(Organisation.id)).where(Organisation.status == 'active')
+    )
+    active_orgs = active_org_result.scalar() or 0
+    
+    # Total brands
+    brand_result = await db.execute(select(func.count(Brand.id)))
+    total_brands = brand_result.scalar() or 0
+    
+    # Total products
+    product_result = await db.execute(select(func.count(Product.id)))
+    total_products = product_result.scalar() or 0
+    
+    # Active phone numbers (from organisation_phone_numbers table)
+    phone_result = await db.execute(
+        text("SELECT COUNT(*) FROM organisation_phone_numbers")
+    )
+    active_phones = phone_result.scalar() or 0
+    
+    # Calls today
+    calls_today_result = await db.execute(
+        select(func.count(CallSession.id)).where(
+            func.date(CallSession.created_at) == today
+        )
+    )
+    calls_today = calls_today_result.scalar() or 0
+    
+    # Calls this month
+    calls_month_result = await db.execute(
+        select(func.count(CallSession.id)).where(
+            CallSession.created_at >= month_start
+        )
+    )
+    calls_month = calls_month_result.scalar() or 0
+    
+    # Live calls (status = 'active' or 'in_progress')
+    live_calls_result = await db.execute(
+        text("SELECT COUNT(*) FROM call_sessions WHERE status IN ('active', 'in_progress')")
+    )
+    live_calls = live_calls_result.scalar() or 0
+    
+    # Escalated cases
+    escalated_result = await db.execute(
+        text("SELECT COUNT(*) FROM escalations WHERE status != 'resolved'")
+    )
+    escalated = escalated_result.scalar() or 0
+    
+    # Average AI confidence (placeholder - will be calculated from actual calls)
+    avg_confidence = 75.0  # Default value
+    
+    # Total users
+    users_result = await db.execute(select(func.count(User.id)))
+    total_users = users_result.scalar() or 0
+    
+    # Total KB entries
+    kb_result = await db.execute(
+        text("SELECT COUNT(*) FROM kb_entries")
+    )
+    total_kb = kb_result.scalar() or 0
+    
+    return {
+        "total_organisations": total_orgs,
+        "active_organisations": active_orgs,
+        "total_brands": total_brands,
+        "total_products": total_products,
+        "active_phone_numbers": active_phones,
+        "total_calls_today": calls_today,
+        "total_calls_month": calls_month,
+        "live_calls_count": live_calls,
+        "escalated_cases_count": escalated,
+        "avg_ai_confidence": round(float(avg_confidence), 2),
+        "total_users": total_users,
+        "total_kb_entries": total_kb
+    }
+
+
+# ===== Organisation Management =====
+
+class OrganisationCreate(BaseModel):
+    name: str
+    primary_phone: Optional[str] = None  # Phone number farmers will call
+    description: Optional[str] = None
+    website_url: Optional[str] = None
+    auto_import_products: bool = False
+    admin_password: Optional[str] = None
+
+
+@router.post("/organisations")
+async def create_organisation(
+    org_data: OrganisationCreate,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """Create a new organisation"""
+    
+    # Check if organisation name already exists
+    existing_result = await db.execute(
+        select(Organisation).where(Organisation.name == org_data.name)
+    )
+    existing_org = existing_result.scalar_one_or_none()
+    
+    if existing_org:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Organisation with name '{org_data.name}' already exists"
+        )
+    
+    # Create organisation
+    new_org = Organisation(
+        name=org_data.name,
+        primary_phone=org_data.primary_phone,  # Store the phone number
+        status='active'
+    )
+    
+    db.add(new_org)
+    await db.commit()
+    await db.refresh(new_org)
+    
+    # Create default admin user for this organisation
+    from core.auth import get_password_hash
+    import secrets
+    
+    # Use provided password or generate random one
+    default_password = org_data.admin_password if org_data.admin_password else secrets.token_urlsafe(12)
+    org_admin_username = new_org.name.lower().replace(' ', '_').replace('.', '')[:50] + '_admin'
+    
+    # Check if username already exists
+    existing_user_result = await db.execute(
+        select(User).where(User.username == org_admin_username)
+    )
+    existing_user = existing_user_result.scalar_one_or_none()
+    
+    admin_user = None
+    if not existing_user:
+        admin_user = User(
+            username=org_admin_username,
+            email=f"{org_admin_username}@{new_org.name.lower().replace(' ', '')}.com",
+            hashed_password=get_password_hash(default_password),
+            full_name=f"{new_org.name} Administrator",
+            role="organisation_admin",
+            organisation_id=new_org.id,
+            is_active=True
+        )
+        db.add(admin_user)
+        await db.commit()
+        await db.refresh(admin_user)
+    
+    # Auto-import products from website if URL provided
+    import_result = None
+    if org_data.website_url and org_data.auto_import_products:
+        try:
+            scrape_result = await scraper.scrape_products(
+                org_data.website_url,
+                new_org.name
+            )
+            
+            if scrape_result['success'] and scrape_result['products']:
+                # Auto-create brand from website
+                from urllib.parse import urlparse
+                domain = urlparse(org_data.website_url).netloc
+                brand_name = domain.replace('www.', '').split('.')[0].title()
+                
+                new_brand = Brand(
+                    organisation_id=new_org.id,
+                    name=brand_name,
+                    description=f"Products from {org_data.website_url}",
+                    is_active=True
+                )
+                db.add(new_brand)
+                await db.commit()
+                await db.refresh(new_brand)
+                
+                # Import products
+                imported_count = 0
+                for product_data in scrape_result['products'][:50]:  # Limit to 50 on creation
+                    try:
+                        new_product = Product(
+                            organisation_id=new_org.id,
+                            brand_id=new_brand.id,
+                            name=product_data['name'],
+                            category=product_data.get('category', 'other'),
+                            sub_category=product_data.get('sub_category'),
+                            description=product_data.get('description'),
+                            is_active=True
+                        )
+                        db.add(new_product)
+                        imported_count += 1
+                    except Exception:
+                        continue
+                
+                await db.commit()
+                import_result = {
+                    'imported': imported_count,
+                    'total_found': scrape_result['total_found'],
+                    'brand_id': new_brand.id,
+                    'brand_name': brand_name
+                }
+        except Exception as e:
+            print(f"Auto-import failed: {e}")
+            # Don't fail org creation if import fails
+            pass
+    
+    # Get user for audit log
+    user_result = await db.execute(
+        select(User).where(User.username == current_user["username"])
+    )
+    user = user_result.scalar_one_or_none()
+    
+    # Create audit log
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="organisation_create",
+        action_category="organisation",
+        description=f"Created organisation: {new_org.name}",
+        entity_type="organisation",
+        entity_id=new_org.id,
+        new_value={"name": new_org.name, "status": new_org.status},
+        severity="info",
+        request=request
+    )
+    
+    return {
+        "success": True,
+        "message": f"Organisation '{new_org.name}' created successfully",
+        "organisation_id": new_org.id,
+        "admin_user": {
+            "username": admin_user.username if admin_user else None,
+            "password": default_password if admin_user else None,
+            "email": admin_user.email if admin_user else None
+        } if admin_user else None,
+        "organisation": {
+            "id": new_org.id,
+            "name": new_org.name,
+            "status": new_org.status,
+            "created_at": new_org.created_at.isoformat() if new_org.created_at else None
+        },
+        "import_result": import_result
+    }
+
+
+@router.get("/organisations/stats", response_model=List[OrganisationStats])
+async def get_organisations_stats(
+    skip: int = 0,
+    limit: int = 100,
+    status: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all organisations with statistics"""
+    
+    query = select(Organisation)
+    if status:
+        if status == "active":
+            query = query.where(Organisation.status == 'active')
+        elif status == "inactive":
+            query = query.where(Organisation.status != 'active')
+    
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
+    orgs = result.scalars().all()
+    
+    stats_list = []
+    for org in orgs:
+        # Count brands
+        brand_count = await db.execute(
+            select(func.count(Brand.id)).where(Brand.organisation_id == org.id)
+        )
+        total_brands = brand_count.scalar() or 0
+        
+        # Count products
+        product_count = await db.execute(
+            select(func.count(Product.id)).where(Product.organisation_id == org.id)
+        )
+        total_products = product_count.scalar() or 0
+        
+        # Count calls
+        call_count = await db.execute(
+            text(f"SELECT COUNT(*) FROM call_sessions WHERE organisation_id = {org.id}")
+        )
+        total_calls = call_count.scalar() or 0
+        
+        # Get phone numbers
+        phone_result = await db.execute(
+            text(f"SELECT phone_number FROM organisation_phone_numbers WHERE organisation_id = {org.id}")
+        )
+        phones = [row[0] for row in phone_result.fetchall()]
+        
+        stats_list.append({
+            "id": org.id,
+            "name": org.name,
+            "status": org.status,
+            "is_active": org.status == 'active',
+            "brand_count": total_brands,
+            "product_count": total_products,
+            "call_count": total_calls,
+            "phone_count": len(phones),
+            "phone_numbers": phones,
+            "created_at": org.created_at.isoformat() if org.created_at else ""
+        })
+    
+    return stats_list
+
+
+@router.patch("/organisations/{org_id}/status")
+async def update_organisation_status(
+    org_id: int,
+    is_active: bool,
+    request: Request,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Activate or suspend an organisation"""
+    
+    # Get organisation
+    result = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    
+    old_status = org.status
+    org.status = 'active' if is_active else 'suspended'
+    
+    await db.commit()
+    
+    # Create audit log
+    user_obj = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = user_obj.scalar_one()
+    
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="org_status_change",
+        action_category="organisation",
+        description=f"Changed organisation '{org.name}' status from {old_status} to {org.status}",
+        entity_type="organisation",
+        entity_id=org.id,
+        organisation_id=org.id,
+        old_value={"status": old_status},
+        new_value={"status": org.status},
+        severity="warning" if not is_active else "info",
+        request=request
+    )
+    
+    return {"success": True, "message": f"Organisation {'activated' if is_active else 'suspended'}"}
+
+
+# ===== Platform Configuration =====
+
+@router.get("/platform/config", response_model=PlatformConfigResponse)
+async def get_platform_config(
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get platform configuration"""
+    result = await db.execute(select(PlatformConfig).limit(1))
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        # Create default config
+        config = PlatformConfig()
+        db.add(config)
+        await db.commit()
+        await db.refresh(config)
+    
+    return PlatformConfigResponse(
+        ai_confidence_threshold=config.ai_confidence_threshold,
+        max_call_duration_minutes=config.max_call_duration_minutes,
+        default_language=config.default_language,
+        stt_provider=config.stt_provider,
+        tts_provider=config.tts_provider,
+        llm_model=config.llm_model,
+        rag_strictness_level=config.rag_strictness_level,
+        rag_min_confidence=config.rag_min_confidence,
+        force_kb_approval=config.force_kb_approval,
+        enable_call_recording=config.enable_call_recording,
+        enable_auto_escalation=config.enable_auto_escalation,
+        trial_duration_days=config.trial_duration_days,
+        max_concurrent_calls=config.max_concurrent_calls,
+        updated_at=config.updated_at.isoformat() if config.updated_at else None
+    )
+
+
+@router.put("/platform/config")
+async def update_platform_config(
+    config_update: PlatformConfigUpdate,
+    request: Request,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update platform configuration (DANGER ZONE)"""
+    
+    # Get current config
+    result = await db.execute(select(PlatformConfig).limit(1))
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        config = PlatformConfig()
+        db.add(config)
+    
+    # Store old values
+    old_values = {}
+    new_values = {}
+    
+    # Update fields
+    update_data = config_update.dict(exclude_unset=True)
+    for field, value in update_data.items():
+        old_values[field] = getattr(config, field)
+        setattr(config, field, value)
+        new_values[field] = value
+    
+    # Get user
+    user_result = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = user_result.scalar_one()
+    
+    config.updated_by = user.id
+    config.updated_at = datetime.now(timezone.utc)
+    
+    await db.commit()
+    
+    # Create audit log
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="platform_config_change",
+        action_category="config",
+        description=f"Updated platform configuration: {', '.join(update_data.keys())}",
+        entity_type="platform_config",
+        entity_id=config.id,
+        old_value=old_values,
+        new_value=new_values,
+        severity="critical",
+        request=request
+    )
+    
+    return {"success": True, "message": "Platform configuration updated"}
+
+
+# ===== Audit Logs =====
+
+@router.get("/audit-logs", response_model=List[AuditLogResponse])
+async def get_audit_logs(
+    skip: int = 0,
+    limit: int = 100,
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    action_category: Optional[str] = Query(None),
+    organisation_id: Optional[int] = Query(None),
+    severity: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get audit logs with filters"""
+    
+    query = select(AuditLog)
+    
+    # Apply filters
+    if action_category:
+        query = query.where(AuditLog.action_category == action_category)
+    if organisation_id:
+        query = query.where(AuditLog.organisation_id == organisation_id)
+    if severity:
+        query = query.where(AuditLog.severity == severity)
+    if start_date:
+        query = query.where(AuditLog.timestamp >= datetime.fromisoformat(start_date))
+    if end_date:
+        query = query.where(AuditLog.timestamp <= datetime.fromisoformat(end_date))
+    
+    # Order by most recent
+    query = query.order_by(desc(AuditLog.timestamp)).offset(skip).limit(limit)
+    
+    result = await db.execute(query)
+    logs = result.scalars().all()
+    
+    return [
+        AuditLogResponse(
+            id=log.id,
+            username=log.username,
+            user_role=log.user_role,
+            action_type=log.action_type,
+            action_category=log.action_category,
+            description=log.description,
+            entity_type=log.entity_type,
+            entity_id=log.entity_id,
+            organisation_id=log.organisation_id,
+            severity=log.severity,
+            created_at=log.created_at.isoformat()
+        )
+        for log in logs
+    ]
+
+
+# ===== Banned Products Management =====
+
+@router.get("/banned-products")
+async def get_banned_products(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all globally banned products"""
+    result = await db.execute(
+        select(BannedProduct)
+        .where(BannedProduct.is_active == True)
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
+@router.post("/banned-products")
+async def ban_product(
+    product_name: str,
+    ban_reason: str,
+    chemical_name: Optional[str] = None,
+    regulatory_reference: Optional[str] = None,
+    request: Request = None,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Globally ban a product"""
+    
+    # Get user
+    user_result = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = user_result.scalar_one()
+    
+    banned_product = BannedProduct(
+        product_name=product_name,
+        chemical_name=chemical_name,
+        ban_reason=ban_reason,
+        regulatory_reference=regulatory_reference,
+        banned_by_user=user.id
+    )
+    
+    db.add(banned_product)
+    await db.commit()
+    
+    # Audit log
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="product_ban",
+        action_category="product",
+        description=f"Globally banned product: {product_name}",
+        entity_type="banned_product",
+        entity_id=banned_product.id,
+        new_value={"product_name": product_name, "ban_reason": ban_reason},
+        severity="critical",
+        request=request
+    )
+    
+    return {"success": True, "message": f"Product '{product_name}' banned globally"}
+
+
+# ===== Organisation Phone Numbers =====
+
+@router.get("/organisations/{organisation_id}/phone-numbers")
+async def get_organisation_phone_numbers(
+    organisation_id: int,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all phone numbers for a specific organisation"""
+    
+    # Verify organisation exists
+    org_result = await db.execute(
+        select(Organisation).where(Organisation.id == organisation_id)
+    )
+    org = org_result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    
+    # Get phone numbers
+    phone_result = await db.execute(
+        text("""
+            SELECT id, phone_number, channel, status, region, created_at
+            FROM organisation_phone_numbers
+            WHERE organisation_id = :org_id
+            ORDER BY created_at DESC
+        """),
+        {"org_id": organisation_id}
+    )
+    
+    phones = []
+    for row in phone_result:
+        phones.append({
+            "id": row[0],
+            "phone_number": row[1],
+            "channel": row[2],
+            "status": row[3],
+            "region": row[4],
+            "created_at": row[5].isoformat() if row[5] else None
+        })
+    
+    return phones
+
+
+# ===== Import Products from Website =====
+
+class WebsiteImportRequest(BaseModel):
+    website_url: str
+    brand_id: Optional[int] = None
+    auto_create_brand: bool = True
+
+
+@router.post("/organisations/{organisation_id}/import-from-website")
+async def import_products_from_website(
+    organisation_id: int,
+    request_data: WebsiteImportRequest,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """
+    Import products from a company website
+    Scrapes the website and automatically creates products
+    """
+    
+    # Verify organisation exists
+    org_result = await db.execute(
+        select(Organisation).where(Organisation.id == organisation_id)
+    )
+    org = org_result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    
+    # Get user from DB
+    user_result = await db.execute(
+        select(User).where(User.id == current_user["user_id"])
+    )
+    user = user_result.scalar_one_or_none()
+    
+    # Scrape website
+    scrape_result = await scraper.scrape_products(
+        request_data.website_url,
+        org.name
+    )
+    
+    if not scrape_result['success']:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to scrape website: {scrape_result['error']}"
+        )
+    
+    if not scrape_result['products']:
+        raise HTTPException(
+            status_code=400,
+            detail="No products found on the website. Please check the URL or try a different page."
+        )
+    
+    # Determine brand to use
+    brand_id = request_data.brand_id
+    
+    if not brand_id and request_data.auto_create_brand:
+        # Auto-create brand from website domain
+        from urllib.parse import urlparse
+        domain = urlparse(request_data.website_url).netloc
+        brand_name = domain.replace('www.', '').split('.')[0].title()
+        
+        # Check if brand already exists
+        brand_result = await db.execute(
+            select(Brand).where(
+                and_(
+                    Brand.organisation_id == organisation_id,
+                    Brand.name == brand_name
+                )
+            )
+        )
+        existing_brand = brand_result.scalar_one_or_none()
+        
+        if existing_brand:
+            brand_id = existing_brand.id
+        else:
+            # Create new brand
+            new_brand = Brand(
+                organisation_id=organisation_id,
+                name=brand_name,
+                description=f"Products from {request_data.website_url}",
+                is_active=True
+            )
+            db.add(new_brand)
+            await db.commit()
+            await db.refresh(new_brand)
+            brand_id = new_brand.id
+    
+    if not brand_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Brand ID required. Set brand_id or enable auto_create_brand."
+        )
+    
+    # Import products
+    imported_count = 0
+    skipped_count = 0
+    
+    for product_data in scrape_result['products']:
+        try:
+            # Check if product already exists (by name)
+            existing_result = await db.execute(
+                select(Product).where(
+                    and_(
+                        Product.organisation_id == organisation_id,
+                        Product.name == product_data['name']
+                    )
+                )
+            )
+            existing_product = existing_result.scalar_one_or_none()
+            
+            if existing_product:
+                skipped_count += 1
+                continue
+            
+            # Create new product
+            new_product = Product(
+                organisation_id=organisation_id,
+                brand_id=brand_id,
+                name=product_data['name'],
+                category=product_data.get('category', 'other'),
+                sub_category=product_data.get('sub_category'),
+                description=product_data.get('description'),
+                target_crops=product_data.get('target_crops'),
+                target_problems=product_data.get('target_problems'),
+                dosage=product_data.get('dosage'),
+                usage_instructions=product_data.get('usage_instructions'),
+                safety_precautions=product_data.get('safety_precautions'),
+                is_active=True
+            )
+            
+            db.add(new_product)
+            imported_count += 1
+            
+        except Exception as e:
+            print(f"Error importing product {product_data.get('name')}: {e}")
+            continue
+    
+    await db.commit()
+    
+    # Create audit log
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="product_import",
+        action_category="product",
+        description=f"Imported {imported_count} products from {request_data.website_url}",
+        entity_type="product",
+        entity_id=brand_id,
+        new_value={
+            "website_url": request_data.website_url,
+            "imported": imported_count,
+            "skipped": skipped_count,
+            "total_found": scrape_result['total_found']
+        },
+        severity="info",
+        request=request
+    )
+    
+    return {
+        "success": True,
+        "message": f"Successfully imported {imported_count} products",
+        "imported_count": imported_count,
+        "skipped_count": skipped_count,
+        "total_found": scrape_result['total_found'],
+        "brand_id": brand_id
+    }
+
+
+# ===== Call Analytics =====
+
+@router.get("/call-analytics")
+async def get_call_analytics(
+    range: str = Query("today"),  # today, week, month, all
+    organisation_id: Optional[int] = Query(None),
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get detailed call analytics"""
+    from datetime import date
+    
+    # Determine date range
+    today = date.today()
+    if range == "today":
+        start_date = today
+    elif range == "week":
+        start_date = today - timedelta(days=7)
+    elif range == "month":
+        start_date = today - timedelta(days=30)
+    else:
+        start_date = None
+    
+    # Base query
+    query = select(CallSession)
+    if start_date:
+        query = query.where(func.date(CallSession.created_at) >= start_date)
+    if organisation_id:
+        query = query.where(CallSession.organisation_id == organisation_id)
+    
+    result = await db.execute(query)
+    calls = result.scalars().all()
+    
+    if not calls:
+        return {
+            "total_calls": 0,
+            "avg_duration_seconds": 0,
+            "ai_resolution_rate": 0,
+            "human_resolution_rate": 0,
+            "top_crops": [],
+            "top_problems": [],
+            "calls_by_hour": [],
+            "org_distribution": []
+        }
+    
+    # Calculate metrics
+    total_calls = len(calls)
+    total_duration = sum([c.duration_seconds or 0 for c in calls])
+    avg_duration = total_duration / total_calls if total_calls > 0 else 0
+    
+    # Resolution rates (placeholder - would need actual data)
+    ai_resolved = sum([1 for c in calls if c.status == 'completed'])
+    ai_resolution_rate = (ai_resolved / total_calls * 100) if total_calls > 0 else 0
+    human_resolution_rate = 100 - ai_resolution_rate
+    
+    # Top crops (from farmer_info JSON field)
+    crop_counts = {}
+    for call in calls:
+        if call.farmer_info and isinstance(call.farmer_info, dict):
+            crop = call.farmer_info.get('crop')
+            if crop:
+                crop_counts[crop] = crop_counts.get(crop, 0) + 1
+    
+    top_crops = [{"crop": crop, "count": count} for crop, count in sorted(crop_counts.items(), key=lambda x: x[1], reverse=True)]
+    
+    # Top problems (placeholder)
+    top_problems = [
+        {"problem": "Yellowing leaves", "count": int(total_calls * 0.3)},
+        {"problem": "Pest attack", "count": int(total_calls * 0.25)},
+        {"problem": "Wilting", "count": int(total_calls * 0.2)},
+        {"problem": "Disease", "count": int(total_calls * 0.15)},
+        {"problem": "Other", "count": int(total_calls * 0.1)}
+    ]
+    
+    # Calls by hour
+    hour_counts = {}
+    for call in calls:
+        if call.created_at:
+            hour = call.created_at.hour
+            hour_counts[hour] = hour_counts.get(hour, 0) + 1
+    
+    calls_by_hour = [{"hour": h, "count": hour_counts.get(h, 0)} for h in range(24)]
+    
+    # Organisation distribution
+    org_counts = {}
+    for call in calls:
+        if call.organisation_id:
+            org_counts[call.organisation_id] = org_counts.get(call.organisation_id, 0) + 1
+    
+    # Get organisation names
+    org_distribution = []
+    for org_id, count in org_counts.items():
+        org_result = await db.execute(select(Organisation).where(Organisation.id == org_id))
+        org = org_result.scalar_one_or_none()
+        if org:
+            org_distribution.append({
+                "organisation_name": org.name,
+                "call_count": count
+            })
+    
+    return {
+        "total_calls": total_calls,
+        "avg_duration_seconds": round(avg_duration, 2),
+        "ai_resolution_rate": round(ai_resolution_rate, 2),
+        "human_resolution_rate": round(human_resolution_rate, 2),
+        "top_crops": top_crops[:10],
+        "top_problems": top_problems,
+        "calls_by_hour": calls_by_hour,
+        "org_distribution": sorted(org_distribution, key=lambda x: x['call_count'], reverse=True)
+    }
+
+
+# ===== Platform Config Management =====
+
+@router.get("/config")
+async def get_platform_config(
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current platform configuration"""
+    result = await db.execute(select(PlatformConfig).limit(1))
+    config = result.scalar_one_or_none()
+    
+    if not config:
+        # Return default config
+        return {
+            "ai_confidence_threshold": 70,
+            "max_call_duration_minutes": 15,
+            "default_language": "hi",
+            "stt_provider": "google",
+            "tts_provider": "google",
+            "llm_model": "gpt-4",
+            "rag_strictness_level": "medium",
+            "rag_min_confidence": 60,
+            "force_kb_approval": True,
+            "enable_call_recording": True,
+            "enable_auto_escalation": True,
+            "trial_duration_days": 14,
+            "max_concurrent_calls": 100,
+            "updated_at": None
+        }
+    
+    return {
+        "ai_confidence_threshold": config.ai_confidence_threshold,
+        "max_call_duration_minutes": config.max_call_duration_minutes,
+        "default_language": config.default_language,
+        "stt_provider": config.stt_provider,
+        "tts_provider": config.tts_provider,
+        "llm_model": config.llm_model,
+        "rag_strictness_level": config.rag_strictness_level,
+        "rag_min_confidence": config.rag_min_confidence,
+        "force_kb_approval": config.force_kb_approval,
+        "enable_call_recording": config.enable_call_recording,
+        "enable_auto_escalation": config.enable_auto_escalation,
+        "trial_duration_days": config.trial_duration_days,
+        "max_concurrent_calls": config.max_concurrent_calls,
+        "updated_at": config.updated_at.isoformat() if config.updated_at else None
+    }
+
+
+@router.put("/config")
+async def update_platform_config(
+    config_data: PlatformConfigUpdate,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """Update platform configuration"""
+    user = current_user
+    
+    result = await db.execute(select(PlatformConfig).limit(1))
+    config = result.scalar_one_or_none()
+    
+    old_value = None
+    if config:
+        old_value = {
+            "ai_confidence_threshold": config.ai_confidence_threshold,
+            "rag_strictness_level": config.rag_strictness_level,
+            "llm_model": config.llm_model
+        }
+        
+        # Update existing config
+        for field, value in config_data.dict(exclude_unset=True).items():
+            setattr(config, field, value)
+        config.updated_at = datetime.now(timezone.utc)
+    else:
+        # Create new config
+        config = PlatformConfig(**config_data.dict(exclude_unset=True))
+        config.updated_at = datetime.now(timezone.utc)
+        db.add(config)
+    
+    await db.commit()
+    await db.refresh(config)
+    
+    # Create audit log
+    await create_audit_log(
+        db=db,
+        user=user,
+        action_type="config_update",
+        action_category="platform",
+        description=f"Updated platform AI/RAG configuration",
+        entity_type="platform_config",
+        entity_id=config.id,
+        old_value=old_value,
+        new_value=config_data.dict(exclude_unset=True),
+        severity="warning",
+        request=request
+    )
+    
+    return {
+        "message": "Platform configuration updated successfully",
+        "config": {
+            "ai_confidence_threshold": config.ai_confidence_threshold,
+            "max_call_duration_minutes": config.max_call_duration_minutes,
+            "default_language": config.default_language,
+            "stt_provider": config.stt_provider,
+            "tts_provider": config.tts_provider,
+            "llm_model": config.llm_model,
+            "rag_strictness_level": config.rag_strictness_level,
+            "rag_min_confidence": config.rag_min_confidence,
+            "force_kb_approval": config.force_kb_approval,
+            "enable_call_recording": config.enable_call_recording,
+            "enable_auto_escalation": config.enable_auto_escalation,
+            "trial_duration_days": config.trial_duration_days,
+            "max_concurrent_calls": config.max_concurrent_calls,
+            "updated_at": config.updated_at.isoformat()
+        }
+    }

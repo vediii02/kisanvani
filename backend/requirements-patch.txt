@@ -1,0 +1,5 @@
+# Compatible versions for torch, transformers, and sentence-transformers
+# Fixes AttributeError: module 'torch.utils._pytree' has no attribute 'register_pytree_node'
+torch==2.1.2
+transformers==4.36.2
+sentence-transformers==2.2.2

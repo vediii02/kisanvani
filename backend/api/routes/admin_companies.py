@@ -1,0 +1,344 @@
+# api/routes/admin_companies.py
+"""
+Admin Companies Management API
+Allows admin role to manage all companies across all organisations
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from typing import List, Optional
+from datetime import datetime, timezone
+
+from core.auth import get_current_user, get_password_hash
+from db.session import get_db
+from db.models.company import Company
+from db.models.organisation import Organisation
+from db.models.user import User
+
+router = APIRouter()
+
+# ============================================================================
+# MIDDLEWARE: Verify Admin Role
+# ============================================================================
+
+async def verify_admin_role(current_user: dict = Depends(get_current_user)):
+    """Verify that the current user has admin role"""
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied. Admin role required."
+        )
+    return current_user
+
+
+# ============================================================================
+# GET: List All Companies
+# ============================================================================
+
+@router.get("/companies")
+async def get_companies(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    search: Optional[str] = Query(None),
+    organisation_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """
+    Get list of all companies (Admin only)
+    Supports pagination and search
+    """
+    try:
+        query = select(Company)
+        
+        # Apply organisation filter
+        if organisation_id:
+            query = query.where(Company.organisation_id == organisation_id)
+        
+        # Apply search filter
+        if search:
+            search_term = f"%{search}%"
+            query = query.where(Company.name.ilike(search_term))
+        
+        # Get total count
+        count_query = select(func.count()).select_from(Company)
+        if organisation_id:
+            count_query = count_query.where(Company.organisation_id == organisation_id)
+        if search:
+            search_term = f"%{search}%"
+            count_query = count_query.where(Company.name.ilike(search_term))
+        
+        result = await db.execute(count_query)
+        total = result.scalar()
+        
+        # Apply pagination
+        query = query.order_by(Company.created_at.desc()).offset(skip).limit(limit)
+        result = await db.execute(query)
+        companies = result.scalars().all()
+        
+        # Get organisation names
+        companies_data = []
+        for company in companies:
+            org_result = await db.execute(
+                select(Organisation).where(Organisation.id == company.organisation_id)
+            )
+            org = org_result.scalar_one_or_none()
+            
+            companies_data.append({
+                "id": company.id,
+                "name": company.name,
+                "organisation_id": company.organisation_id,
+                "organisation_name": org.name if org else None,
+                "email": company.email,
+                "phone": company.phone,
+                "address": company.address,
+                "contact_person": company.contact_person,
+                "status": company.status,
+                "created_at": company.created_at.isoformat() if company.created_at else None,
+            })
+        
+        return companies_data
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching companies: {str(e)}")
+
+
+# ============================================================================
+# GET: Single Company Details
+# ============================================================================
+
+@router.get("/companies/{company_id}")
+async def get_company(
+    company_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """Get details of a specific company"""
+    query = select(Company).where(Company.id == company_id)
+    result = await db.execute(query)
+    company = result.scalar_one_or_none()
+    
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    # Get organisation name
+    org_result = await db.execute(
+        select(Organisation).where(Organisation.id == company.organisation_id)
+    )
+    org = org_result.scalar_one_or_none()
+    
+    return {
+        "id": company.id,
+        "name": company.name,
+        "organisation_id": company.organisation_id,
+        "organisation_name": org.name if org else None,
+        "email": company.email,
+        "phone": company.phone,
+        "address": company.address,
+        "contact_person": company.contact_person,
+        "status": company.status,
+        "created_at": company.created_at.isoformat() if company.created_at else None,
+    }
+
+
+# ============================================================================
+# POST: Create Company
+# ============================================================================
+
+@router.post("/companies")
+async def create_company(
+    company_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """Create a new company (Admin only)"""
+    
+    # Verify organisation exists
+    org_query = select(Organisation).where(Organisation.id == company_data.get("organisation_id"))
+    org_result = await db.execute(org_query)
+    org = org_result.scalar_one_or_none()
+    
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+    
+    try:
+        # Create company
+        new_company = Company(
+            name=company_data.get("name"),
+            organisation_id=company_data.get("organisation_id"),
+            email=company_data.get("email"),
+            phone=company_data.get("phone"),
+            address=company_data.get("address"),
+            contact_person=company_data.get("contact_person"),
+            status=company_data.get("status", "active"),
+            created_at=datetime.now(timezone.utc)
+        )
+        
+        db.add(new_company)
+        await db.commit()
+        await db.refresh(new_company)
+        
+        return {
+            "success": True,
+            "message": "Company created successfully",
+            "company": {
+                "id": new_company.id,
+                "name": new_company.name,
+                "organisation_id": new_company.organisation_id
+            }
+        }
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating company: {str(e)}")
+
+
+# ============================================================================
+# PUT: Update Company
+# ============================================================================
+
+@router.put("/companies/{company_id}")
+async def update_company(
+    company_id: int,
+    company_data: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """Update an existing company (Admin only)"""
+    
+    query = select(Company).where(Company.id == company_id)
+    result = await db.execute(query)
+    company = result.scalar_one_or_none()
+    
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    try:
+        # Update fields
+        if "name" in company_data:
+            company.name = company_data["name"]
+        if "organisation_id" in company_data:
+            # Verify new organisation exists
+            org_query = select(Organisation).where(Organisation.id == company_data["organisation_id"])
+            org_result = await db.execute(org_query)
+            if not org_result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Organisation not found")
+            company.organisation_id = company_data["organisation_id"]
+        if "email" in company_data:
+            company.email = company_data["email"]
+        if "phone" in company_data:
+            company.phone = company_data["phone"]
+        if "address" in company_data:
+            company.address = company_data["address"]
+        if "contact_person" in company_data:
+            company.contact_person = company_data["contact_person"]
+        if "status" in company_data:
+            company.status = company_data["status"]
+        
+        company.updated_at = datetime.now(timezone.utc)
+        
+        await db.commit()
+        await db.refresh(company)
+        
+        return {
+            "success": True,
+            "message": "Company updated successfully",
+            "company": {
+                "id": company.id,
+                "name": company.name,
+                "organisation_id": company.organisation_id
+            }
+        }
+    
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating company: {str(e)}")
+
+
+# ============================================================================
+# DELETE: Delete Company
+# ============================================================================
+
+@router.delete("/companies/{company_id}")
+async def delete_company(
+    company_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """Delete a company (Admin only)"""
+    
+    query = select(Company).where(Company.id == company_id)
+    result = await db.execute(query)
+    company = result.scalar_one_or_none()
+    
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    try:
+        company_name = company.name
+        # Check for related records
+        from db.models.product import Product
+        
+        # Note: Brands don't have company_id yet (they only have organisation_id)
+        # Only check products and users for now
+        products_count = await db.execute(select(func.count()).select_from(Product).where(Product.company_id == company_id))
+        users_count = await db.execute(select(func.count()).select_from(User).where(User.company_id == company_id))
+        
+        products = products_count.scalar()
+        users = users_count.scalar()
+        
+        if any([products, users]):
+            details = []
+            if products > 0:
+                details.append(f"{products} products")
+            if users > 0:
+                details.append(f"{users} users")
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot delete company. It has {', '.join(details)}. Please delete related records first or set is_active to false."
+            )
+        
+        # Hard delete if no related records
+        await db.delete(company)
+        await db.commit()
+        
+        return {
+            "success": True,
+            "message": f"Company '{company_name}' deleted successfully"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error deleting company: {str(e)}")
+
+
+# ============================================================================
+# GET: List All Organisations (for dropdown)
+# ============================================================================
+
+@router.get("/organisations")
+async def get_organisations(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_admin_role)
+):
+    """Get list of all organisations for dropdown (Admin only)"""
+    try:
+        query = select(Organisation).where(Organisation.status == "active")
+        result = await db.execute(query)
+        organisations = result.scalars().all()
+        
+        return [
+            {
+                "id": org.id,
+                "name": org.name,
+                "domain": org.domain
+            }
+            for org in organisations
+        ]
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching organisations: {str(e)}")

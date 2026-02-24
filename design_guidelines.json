@@ -1,0 +1,125 @@
+{
+  "project_name": "Kisan Vani AI",
+  "design_philosophy": {
+    "identity": "E1: The Anti-AI Designer",
+    "core_concept": "Organic Precision",
+    "description": "A fusion of agricultural warmth (organic textures, earth tones) and enterprise precision (Swiss grid, high data density). The interface must feel trustworthy to Indian officers while providing the speed required for emergency advisory.",
+    "emotional_tone": ["Trustworthy", "Accessible", "Efficient", "Grounded"],
+    "visual_style": "Clean, high-contrast data surfaces on top of warm, subtle organic backgrounds."
+  },
+  "typography": {
+    "font_family": {
+      "headings": "Manrope, sans-serif",
+      "body": "Inter, sans-serif",
+      "mono": "JetBrains Mono, monospace"
+    },
+    "usage_rules": {
+      "headings": "Use Manrope for all headings (h1-h6). Weight: SemiBold (600) or Bold (700). Tracking: tight (-0.02em).",
+      "body": "Use Inter for all data tables, inputs, and long-form text. Weight: Regular (400) or Medium (500).",
+      "numbers": "Use tabular-nums class for all data metrics and phone numbers to ensure alignment."
+    },
+    "scale": {
+      "h1": "text-4xl md:text-5xl font-bold tracking-tight",
+      "h2": "text-3xl font-semibold tracking-tight",
+      "h3": "text-2xl font-semibold",
+      "body_lg": "text-lg leading-relaxed",
+      "body_base": "text-base leading-normal",
+      "caption": "text-sm text-muted-foreground"
+    }
+  },
+  "colors": {
+    "palette_name": "Kisan Earth & Tech",
+    "mode": "light",
+    "variables": {
+      "background": "60 20% 98%",
+      "foreground": "145 63% 10%",
+      "card": "0 0% 100%",
+      "card_foreground": "145 63% 10%",
+      "popover": "0 0% 100%",
+      "popover_foreground": "145 63% 10%",
+      "primary": "145 63% 25%",
+      "primary_foreground": "0 0% 100%",
+      "secondary": "35 90% 60%",
+      "secondary_foreground": "35 90% 10%",
+      "muted": "60 10% 94%",
+      "muted_foreground": "145 10% 40%",
+      "accent": "240 80% 60%",
+      "accent_foreground": "0 0% 100%",
+      "destructive": "0 84% 60%",
+      "destructive_foreground": "0 0% 98%",
+      "border": "145 20% 90%",
+      "input": "145 20% 90%",
+      "ring": "145 63% 25%"
+    },
+    "usage": {
+      "primary": "Main actions, active states, sidebar background.",
+      "secondary": "Warnings, highlights, 'Pending' states.",
+      "accent": "AI/Voice indicators, active call pulsing effects.",
+      "background": "Global page background (Warm Rice Paper).",
+      "muted": "Table headers, disabled states."
+    }
+  },
+  "layout": {
+    "grid_system": "The 'Control Room' Grid",
+    "spacing": {
+      "container_padding": "p-6 md:p-8",
+      "gap_default": "gap-6",
+      "gap_tight": "gap-4"
+    },
+    "structure": {
+      "dashboard": "Sidebar (250px fixed) + Main Content (Fluid).",
+      "card_grid": "grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
+      "detail_view": "2/3 Main Content (Left) + 1/3 Context Sidebar (Right)"
+    }
+  },
+  "components": {
+    "buttons": {
+      "style": "Pill-shaped for primary actions, rounded-md for filters/secondary.",
+      "classes": "rounded-full font-medium shadow-sm hover:shadow-md transition-all"
+    },
+    "cards": {
+      "style": "Flat, high border contrast, no heavy shadows.",
+      "classes": "bg-card border border-border/60 shadow-sm hover:border-primary/20 transition-colors"
+    },
+    "inputs": {
+      "style": "Clean, minimal, focus ring.",
+      "classes": "bg-white border-input focus:ring-2 focus:ring-primary/20"
+    },
+    "status_badges": {
+      "active": "bg-green-100 text-green-800 border-green-200",
+      "pending": "bg-yellow-100 text-yellow-800 border-yellow-200",
+      "critical": "bg-red-100 text-red-800 border-red-200",
+      "neutral": "bg-gray-100 text-gray-800 border-gray-200"
+    }
+  },
+  "visual_enhancers": {
+    "textures": "Use a subtle noise texture on the main background to reduce digital sterility.",
+    "glassmorphism": "Use backdrop-blur-md for sticky headers and overlays.",
+    "borders": "Use 1px borders everywhere. Avoid borderless cards in this data-heavy context.",
+    "motion": {
+      "hover": "transform -translate-y-0.5 transition-transform duration-200",
+      "pulse": "animate-pulse for active call indicators"
+    }
+  },
+  "assets": {
+    "icons": "Lucide React (default). Use stroke-width={1.5} for a refined look.",
+    "images": {
+      "login_bg": "https://images.pexels.com/photos/29981180/pexels-photo-29981180.jpeg",
+      "dashboard_hero": "https://images.pexels.com/photos/18479132/pexels-photo-18479132.jpeg",
+      "operator_avatar_fallback": "https://images.pexels.com/photos/7709255/pexels-photo-7709255.jpeg"
+    }
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets WCAG AA. Use darker shades of green/gold for text on colored badges.",
+    "focus": "Visible focus rings on all interactive elements.",
+    "aria": "Use aria-labels for all icon-only buttons."
+  },
+  "universal_guidelines": [
+    "Do not use gradients for main backgrounds.",
+    "Use 'Manrope' for all headings.",
+    "Ensure all interactive elements have data-testid attributes.",
+    "Use Sonner for toast notifications.",
+    "Prioritize Hindi-compatible font rendering (line-heights may need adjustment)."
+  ],
+  "instructions_to_main_agent": "You are building the frontend. Use the colors defined in 'variables' to update index.css. Use the layout principles to build the Dashboard shell. Use the image URLs provided for the login and hero sections. Ensure the 'Active Call' component uses the 'accent' color for the voice visualization."
+}

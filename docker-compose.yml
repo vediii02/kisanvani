@@ -1,0 +1,143 @@
+# version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: kisanvani_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: kisanvani_db
+      MYSQL_USER: kisanvani
+      MYSQL_PASSWORD: kisanvani2025
+    ports:
+      - "3308:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
+    networks:
+      - kisanvani_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: kisanvani_redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - kisanvani_network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kisanvani_qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    networks:
+      - kisanvani_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kisanvani_backend
+    ports:
+      - "8001:8001"
+
+    env_file:
+      - ./backend/.env
+
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USER: kisanvani
+      MYSQL_PASSWORD: kisanvani2025
+      MYSQL_DATABASE: kisanvani_db
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://kisanvani_qdrant:6333
+      CORS_ORIGINS: http://localhost:3001,http://34.47.250.57:3001,https://kisan.rechargestudio.com,http://kisan.rechargestudio.com
+
+      DEFAULT_STT_PROVIDER: mock
+      DEFAULT_TTS_PROVIDER: google
+      DEFAULT_LLM_PROVIDER: groq
+      DEFAULT_LLM_MODEL: llama3-70b-8192
+
+      GOOGLE_APPLICATION_CREDENTIALS: /app/google-creds.json
+      GEMINI_API_KEY: AIzaSyD5m75OxsDEIRwLNzAoZNaQr8xMqy_PpKE
+      GOOGLE_TTS_API_KEY: AIzaSyD5m75OxsDEIRwLNzAoZNaQr8xMqy_PpKE
+      BASE_URL: https://kisan.rechargestudio.com
+
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+    volumes:
+      - ./backend:/app
+      - ./backend/google-creds.json:/app/google-creds.json
+
+    networks:
+      - kisanvani_network
+
+    # 👇 IMPORTANT FIX — first run without alembic
+    command: >
+      sh -c "sleep 15 &&
+      uvicorn server:app --host 0.0.0.0 --port 8001"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: kisanvani_frontend
+    ports:
+      - "3001:3000"
+    environment:
+      REACT_APP_BACKEND_URL: /api
+      CHOKIDAR_USEPOLLING: true
+      WATCHPACK_POLLING: true
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - kisanvani_network
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: kisanvani_phpmyadmin
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: kisanvani_mysql
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: rootpassword
+    depends_on:
+      - mysql
+    networks:
+      - kisanvani_network
+
+volumes:
+  mysql_data:
+  redis_data:
+  qdrant_data:
+
+networks:
+  kisanvani_network:
+    driver: bridge

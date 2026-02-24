@@ -1,0 +1,13 @@
+[Product Name]: KV Micro Mix
+[Organisation]: Kisan Vani Agri Solutions
+[Product Type]: Micronutrient
+[Crop]: सोयाबीन
+[Problem]: जस्ता और आयरन की कमी
+[Applicable Stage]: फूल आने से पहले
+[Purpose]:
+यह उत्पाद सोयाबीन में सूक्ष्म पोषक तत्वों की कमी
+को पूरा करने में सहायक है।
+[Key Benefit]:
+फूल और फलियों के विकास में सहायता करता है।
+[Usage Note]:
+केवल आवश्यकता होने पर ही उपयोग करें।

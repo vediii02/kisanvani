@@ -1,0 +1,13 @@
+[Product Name]: KV Pest Guard
+[Organisation]: Kisan Vani Agri Solutions
+[Product Type]: Bio Pesticide
+[Crop]: सोयाबीन
+[Problem]: इल्ली, स्टेम फ्लाई जैसे कीट
+[Applicable Stage]: कीट दिखाई देने पर
+[Purpose]:
+यह उत्पाद सोयाबीन में सामान्य कीटों के नियंत्रण
+में सहायक है।
+[Key Benefit]:
+फसल को कीट क्षति से बचाने में मदद करता है।
+[Usage Note]:
+कीट की पुष्टि के बाद ही उपयोग करें।

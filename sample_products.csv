@@ -1,0 +1,6 @@
+name,category,description,target_crops,target_problems,dosage,usage_instructions,is_active
+Bayer Konfidor,pesticide,Effective insecticide for aphids and whitefly control,wheat|rice|cotton,aphids|whitefly,10ml per liter of water,Spray on affected plant parts during early morning or evening,true
+Syngenta Actara,pesticide,Systemic insecticide for sucking pests,tomato|potato|chili,thrips|jassids|beetles,5gm per liter of water,Mix thoroughly and spray ensuring good coverage,true
+UPL Saaf,fungicide,Broad spectrum fungicide for disease management,vegetables|fruits,powdery mildew|downy mildew,2gm per liter of water,Apply at first sign of disease. Repeat after 10-15 days,true
+Coromandel Ammonium Sulphate,fertilizer,Nitrogen and sulphur fertilizer for better crop growth,all crops,nitrogen deficiency,50kg per acre,Apply as basal dose or top dressing,true
+Jain Irrigation Drip System,equipment,Efficient drip irrigation system for water conservation,all crops,water scarcity,NA,Install as per crop spacing. Operate for 1-2 hours daily,true
