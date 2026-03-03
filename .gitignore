@@ -112,3 +112,6 @@ kisan-vani-ai.zip
 *.env
 __pycache__/
 *.pyc
+
+
+.agent

@@ -21,6 +21,7 @@ class ProductBase(BaseModel):
 
 class ProductCreate(ProductBase):
     organisation_id: int
+    company_id: int
     brand_id: int
 
 
@@ -36,13 +37,15 @@ class ProductUpdate(BaseModel):
     safety_precautions: Optional[str] = None
     price_range: Optional[str] = None
     is_active: Optional[bool] = None
+    company_id: Optional[int] = None
     brand_id: Optional[int] = None
 
 
 class ProductResponse(ProductBase):
     id: int
     organisation_id: int
-    brand_id: int
+    company_id: Optional[int] = None
+    brand_id: Optional[int] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 

@@ -210,6 +210,7 @@ async def get_approval_stats(
         .where(
             and_(
                 User.role == "organisation",
+                Organisation.status == "active",
                 User.created_at >= today
             )
         )
@@ -255,6 +256,7 @@ async def get_today_registrations(
         .where(
             and_(
                 User.role == "organisation",
+                Organisation.status == "active",
                 User.created_at >= today
             )
         )

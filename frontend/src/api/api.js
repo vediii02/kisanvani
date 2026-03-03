@@ -4,12 +4,12 @@ import axios from 'axios';
 // API Base URL
 // -------------------------------
 const API_BASE_URL = (() => {
-  // Production domain → Nginx already handles /api/
   if (window.location.hostname === 'kisan.rechargestudio.com') {
-    return '/api'; // Nginx routes /api/ to backend
+    return '/api';
   }
-  // Localhost / IP / env variable
-  return process.env.REACT_APP_BACKEND_URL || `http://${window.location.hostname}:8001/api`;
+  // In development, directly connect to the backend container mapped to localhost:8001
+  // This bypasses any React Dev Server proxy issues (like 504 Gateway Timeout or ERR_NAME_NOT_RESOLVED)
+  return `http://localhost:8001/api`;
 })();
 
 // -------------------------------

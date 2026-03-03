@@ -260,6 +260,7 @@ async def get_approval_stats(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
+                Company.status == "active",
                 User.created_at >= today
             )
         )
@@ -316,6 +317,7 @@ async def get_today_registrations(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
+                Company.status == "active",
                 User.created_at >= today
             )
         )

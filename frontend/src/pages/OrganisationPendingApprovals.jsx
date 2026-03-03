@@ -122,6 +122,31 @@ export default function OrganisationPendingApprovals() {
     return new Date(dateString).toLocaleString();
   };
 
+  const getStatusBadge = (status, isActive) => {
+    if (status === 'active' && isActive) {
+      return (
+        <Badge variant="secondary" className="bg-green-100 text-green-800">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Approved
+        </Badge>
+      );
+    }
+    if (status === 'rejected') {
+      return (
+        <Badge variant="secondary" className="bg-red-100 text-red-800">
+          <XCircle className="h-3 w-3 mr-1" />
+          Rejected
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+        <Clock className="h-3 w-3 mr-1" />
+        Pending
+      </Badge>
+    );
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -375,7 +400,7 @@ export default function OrganisationPendingApprovals() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      {getStatusBadge(reg.org_status, reg.is_active)}
+                      {getStatusBadge(reg.company_status, reg.is_active)}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -65,12 +65,12 @@ const OrganisationDetailView = () => {
   const toggleOrganisationStatus = async () => {
     if (!window.confirm(
       organisation.is_active
-        ? '⚠️ CRITICAL: Suspend this organisation? All services will stop immediately.'
+        ? '⚠️ CRITICAL: Inactivate this organisation? All services will stop immediately.'
         : 'Activate this organisation? Their services will resume.'
     )) return;
 
     try {
-      await api.patch(`/superadmin/organisations-platform/${orgId}/status`, {
+      await api.patch(`/superadmin/organisations/${orgId}/status`, {
         is_active: !organisation.is_active
       });
       setOrganisation({ ...organisation, is_active: !organisation.is_active });
@@ -85,7 +85,7 @@ const OrganisationDetailView = () => {
       `🚨 BAN PRODUCT GLOBALLY:\n\nProduct: ${product.name}\nCompany: ${product.brand_name}\n\nThis will block AI from suggesting this product to ANY organisation.\n\nEnter ban reason (regulatory/safety):`,
       'Safety concern - under investigation'
     );
-    
+
     if (!reason) return;
 
     try {
@@ -143,11 +143,10 @@ const OrganisationDetailView = () => {
             <ArrowLeft className="h-6 w-6 text-gray-600" />
           </button>
           <div className="flex items-center gap-4">
-            <div className={`p-3 rounded-xl shadow-lg ${
-              organisation.is_active 
-                ? 'bg-gradient-to-br from-blue-500 to-indigo-600' 
-                : 'bg-gradient-to-br from-gray-400 to-gray-600'
-            }`}>
+            <div className={`p-3 rounded-xl shadow-lg ${organisation.is_active
+              ? 'bg-gradient-to-br from-blue-500 to-indigo-600'
+              : 'bg-gradient-to-br from-gray-400 to-gray-600'
+              }`}>
               <Building2 className="h-8 w-8 text-white" />
             </div>
             <div>
@@ -161,7 +160,7 @@ const OrganisationDetailView = () => {
                 ) : (
                   <span className="px-3 py-1 bg-red-100 text-red-800 text-sm font-semibold rounded-full flex items-center gap-1">
                     <AlertTriangle className="h-4 w-4" />
-                    Suspended
+                    Inactive
                   </span>
                 )}
                 <span className="text-gray-500 text-sm">ID: {organisation.id}</span>
@@ -169,16 +168,15 @@ const OrganisationDetailView = () => {
             </div>
           </div>
         </div>
-        
+
         <button
           onClick={toggleOrganisationStatus}
-          className={`px-6 py-3 rounded-lg font-semibold transition-all ${
-            organisation.is_active
-              ? 'bg-red-600 hover:bg-red-700 text-white'
-              : 'bg-green-600 hover:bg-green-700 text-white'
-          }`}
+          className={`px-6 py-3 rounded-lg font-semibold transition-all ${organisation.is_active
+            ? 'bg-red-600 hover:bg-red-700 text-white'
+            : 'bg-green-600 hover:bg-green-700 text-white'
+            }`}
         >
-          {organisation.is_active ? '⚠️ Suspend Organisation' : '✅ Activate Organisation'}
+          {organisation.is_active ? '⚠️ Inactive Organisation' : '✅ Activate Organisation'}
         </button>
       </div>
 
@@ -193,7 +191,7 @@ const OrganisationDetailView = () => {
             <Package className="h-10 w-10 text-purple-500" />
           </div>
         </div>
-        
+
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -233,16 +231,14 @@ const OrganisationDetailView = () => {
             { id: 'import', label: 'Import Products', icon: Database },
             { id: 'phones', label: 'Phone Numbers', icon: Phone },
             { id: 'brands', label: 'Brands', icon: Package },
-            { id: 'products', label: 'Products (Safety)', icon: Shield },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-6 py-4 font-medium transition-all ${
-                activeTab === tab.id
-                  ? 'border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
+              className={`flex items-center gap-2 px-6 py-4 font-medium transition-all ${activeTab === tab.id
+                ? 'border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50'
+                : 'text-gray-600 hover:bg-gray-50'
+                }`}
             >
               <tab.icon className="h-5 w-5" />
               {tab.label}
@@ -262,11 +258,11 @@ const OrganisationDetailView = () => {
                 <div className="p-4 bg-gray-50 rounded-lg">
                   <p className="text-sm text-gray-600 mb-1">Status</p>
                   <p className={`text-lg font-bold ${organisation.is_active ? 'text-green-600' : 'text-red-600'}`}>
-                    {organisation.is_active ? 'Active' : 'Suspended'}
+                    {organisation.is_active ? 'Active' : 'Inactive'}
                   </p>
                 </div>
               </div>
-              
+
               <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
                 <div className="flex items-start gap-3">
                   <Shield className="h-6 w-6 text-blue-600 mt-1" />
@@ -274,7 +270,7 @@ const OrganisationDetailView = () => {
                     <h4 className="font-bold text-blue-900 mb-1">Governance Mode</h4>
                     <p className="text-blue-800 text-sm">
                       As Super Admin, you have read-only visibility with critical safety controls.
-                      You can ban products globally and suspend the entire organisation if needed.
+                      You can manage brands and phone numbers, or inactivate the entire organisation if needed.
                     </p>
                   </div>
                 </div>
@@ -285,7 +281,7 @@ const OrganisationDetailView = () => {
           {/* Import Products Tab */}
           {activeTab === 'import' && (
             <div>
-              <WebsiteProductImporter 
+              <WebsiteProductImporter
                 organisationId={orgId}
                 onImportComplete={() => {
                   // Refresh organisation details after import
@@ -366,68 +362,7 @@ const OrganisationDetailView = () => {
             </div>
           )}
 
-          {/* Products Tab - SAFETY CONTROL */}
-          {activeTab === 'products' && (
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold">Products ({products.length}) - Safety & Compliance</h3>
-                <div className="px-4 py-2 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-xs text-red-700 font-semibold flex items-center gap-2">
-                    <Shield className="h-4 w-4" />
-                    AI Risk Control Mode
-                  </p>
-                </div>
-              </div>
-              
-              {products.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No products registered</p>
-              ) : (
-                <table className="min-w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Product</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Brand</th>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Crop</th>
-                      <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Safety Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {products.map(product => (
-                      <tr key={product.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3">
-                          <div className="font-medium">{product.name}</div>
-                          {product.chemical_name && (
-                            <div className="text-xs text-gray-500">{product.chemical_name}</div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">{product.brand_name}</td>
-                        <td className="px-4 py-3">{product.crop_type}</td>
-                        <td className="px-4 py-3 text-center">
-                          <button
-                            onClick={() => banProductGlobally(product)}
-                            className="px-3 py-1 bg-red-100 text-red-700 rounded-lg text-sm font-medium hover:bg-red-200 transition-all flex items-center gap-2 mx-auto"
-                          >
-                            <AlertTriangle className="h-4 w-4" />
-                            Ban Globally
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-              
-              <div className="mt-6 bg-yellow-50 border-l-4 border-yellow-500 p-4 rounded">
-                <div className="flex items-start gap-3">
-                  <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                  <div className="text-sm text-yellow-800">
-                    <p className="font-bold mb-1">⚠️ GLOBAL BAN IMPACT:</p>
-                    <p>When you ban a product here, AI will NEVER suggest it to any organisation on the platform. Use only for safety/regulatory concerns.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
+
         </div>
       </div>
     </div>

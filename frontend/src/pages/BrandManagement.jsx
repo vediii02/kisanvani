@@ -8,25 +8,29 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
-import api, { brandAPI } from '@/api/api';
+import api, { brandAPI, organisationAPI } from '@/api/api';
 
 export default function BrandManagement() {
   const [brands, setBrands] = useState([]);
   const [companies, setCompanies] = useState([]);
+  const [organisations, setOrganisations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingBrand, setEditingBrand] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState({
     name: '',
+    organisation_id: '',
     company_id: '',
     description: '',
+    logo_url: '',
     is_active: true
   });
 
   useEffect(() => {
     fetchBrands();
     fetchCompanies();
+    fetchOrganisations();
   }, []);
 
   const fetchBrands = async () => {
@@ -52,21 +56,35 @@ export default function BrandManagement() {
     }
   };
 
+  const fetchOrganisations = async () => {
+    try {
+      const response = await organisationAPI.getAll(0, 500);
+      setOrganisations(response.data || []);
+    } catch (error) {
+      console.error('Error fetching organisations:', error);
+      toast.error('Failed to load organisations');
+    }
+  };
+
   const handleOpenDialog = (brand = null) => {
     if (brand) {
       setEditingBrand(brand);
       setFormData({
         name: brand.name || '',
+        organisation_id: brand.organisation_id?.toString() || '',
         company_id: brand.company_id?.toString() || '',
         description: brand.description || '',
+        logo_url: brand.logo_url || '',
         is_active: brand.is_active ?? true
       });
     } else {
       setEditingBrand(null);
       setFormData({
         name: '',
+        organisation_id: '',
         company_id: '',
         description: '',
+        logo_url: '',
         is_active: true
       });
     }
@@ -78,8 +96,10 @@ export default function BrandManagement() {
     setEditingBrand(null);
     setFormData({
       name: '',
+      organisation_id: '',
       company_id: '',
       description: '',
+      logo_url: '',
       is_active: true
     });
   };
@@ -92,24 +112,23 @@ export default function BrandManagement() {
       return;
     }
 
+    if (!formData.organisation_id) {
+      toast.error('Please select an organisation');
+      return;
+    }
+
     if (!formData.company_id) {
       toast.error('Please select a company');
       return;
     }
 
     try {
-      // Get the selected company's organisation_id
-      const selectedCompany = companies.find(c => c.id === parseInt(formData.company_id));
-      if (!selectedCompany) {
-        toast.error('Selected company not found');
-        return;
-      }
-
       const payload = {
         name: formData.name.trim(),
-        organisation_id: selectedCompany.organisation_id,
+        organisation_id: parseInt(formData.organisation_id),
         company_id: parseInt(formData.company_id),
         description: formData.description.trim() || null,
+        logo_url: formData.logo_url.trim() || null,
         is_active: formData.is_active
       };
 
@@ -209,21 +228,43 @@ export default function BrandManagement() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
+                  <Label htmlFor="organisation_id">Organisation *</Label>
+                  <Select
+                    value={formData.organisation_id}
+                    onValueChange={(value) => setFormData({ ...formData, organisation_id: value, company_id: '' })}
+                    required
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select organisation" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {organisations.map((org) => (
+                        <SelectItem key={org.id} value={org.id.toString()}>
+                          {org.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
                   <Label htmlFor="company_id">Company *</Label>
                   <Select
                     value={formData.company_id}
                     onValueChange={(value) => setFormData({ ...formData, company_id: value })}
                     required
+                    disabled={!formData.organisation_id}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select company" />
+                      <SelectValue placeholder={formData.organisation_id ? "Select company" : "First select an organisation"} />
                     </SelectTrigger>
                     <SelectContent>
-                      {companies.map((company) => (
-                        <SelectItem key={company.id} value={company.id.toString()}>
-                          {company.name}
-                        </SelectItem>
-                      ))}
+                      {companies
+                        .filter(company => company.organisation_id?.toString() === formData.organisation_id)
+                        .map((company) => (
+                          <SelectItem key={company.id} value={company.id.toString()}>
+                            {company.name}
+                          </SelectItem>
+                        ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -244,6 +285,15 @@ export default function BrandManagement() {
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     placeholder="Brief description of the brand"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="logo_url">Logo URL</Label>
+                  <Input
+                    id="logo_url"
+                    value={formData.logo_url}
+                    onChange={(e) => setFormData({ ...formData, logo_url: e.target.value })}
+                    placeholder="https://example.com/logo.png"
                   />
                 </div>
                 <div className="flex items-center gap-2">

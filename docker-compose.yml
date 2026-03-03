@@ -90,13 +90,19 @@ services:
       - ./backend:/app
       - ./backend/google-creds.json:/app/google-creds.json
 
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
     networks:
       - kisanvani_network
 
-    # 👇 IMPORTANT FIX — first run without alembic
+    # 👇 IMPORTANT FIX — migrate DB then run uvicorn
     command: >
-      sh -c "sleep 15 &&
-      uvicorn server:app --host 0.0.0.0 --port 8001"
+      sh -c "/app/prestart.sh"
 
   frontend:
     build:
@@ -104,13 +110,15 @@ services:
       dockerfile: Dockerfile
     container_name: kisanvani_frontend
     ports:
-      - "3001:3000"
+      - "3001:3001"
     environment:
+      PORT: 3001
       REACT_APP_BACKEND_URL: /api
       CHOKIDAR_USEPOLLING: true
       WATCHPACK_POLLING: true
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     volumes:
       - ./frontend:/app
       - /app/node_modules

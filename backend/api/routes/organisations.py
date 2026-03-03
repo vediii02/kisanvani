@@ -94,13 +94,14 @@ class BrandCreate(BaseModel):
 
 class BrandResponse(BaseModel):
     id: int
-    organisation_id: int
-    company_id: Optional[int]
     name: str
-    description: Optional[str]
-    logo_url: Optional[str]
-    is_active: bool
+    organisation_id: int
+    company_id: Optional[int] = None
+    description: Optional[str] = None
+    logo_url: Optional[str] = None
+    is_active: bool = True
     created_at: str
+    product_count: Optional[int] = 0
 
 class ProductCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
@@ -557,12 +558,14 @@ async def get_organisation_brands(
     return [
         BrandResponse(
             id=brand.id,
-            organisation_id=brand.organisation_id,
             name=brand.name,
+            organisation_id=brand.organisation_id,
+            company_id=brand.company_id,
             description=brand.description,
             logo_url=brand.logo_url,
             is_active=brand.is_active,
-            created_at=brand.created_at.isoformat() if brand.created_at else ""
+            created_at=brand.created_at.isoformat() if brand.created_at else "",
+            product_count=0 # Placeholder, can be calculated if needed
         )
         for brand in brands
     ]
@@ -592,13 +595,14 @@ async def create_brand(
     
     return BrandResponse(
         id=new_brand.id,
+        name=new_brand.name,
         organisation_id=new_brand.organisation_id,
         company_id=new_brand.company_id,
-        name=new_brand.name,
         description=new_brand.description,
         logo_url=new_brand.logo_url,
         is_active=new_brand.is_active,
-        created_at=new_brand.created_at.isoformat() if new_brand.created_at else ""
+        created_at=new_brand.created_at.isoformat() if new_brand.created_at else "",
+        product_count=0
     )
 
 # (Product Management moved to product_router at the bottom)
@@ -647,20 +651,13 @@ async def lookup_organisation_by_phone(
 
 class BrandUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
+    organisation_id: Optional[int] = None
     company_id: Optional[int] = None
     description: Optional[str] = None
+    logo_url: Optional[str] = None
     is_active: Optional[bool] = None
 
-class BrandResponse(BaseModel):
-    id: int
-    name: str
-    organisation_id: int
-    company_id: Optional[int]
-    description: Optional[str]
-    logo_url: Optional[str] = None
-    is_active: bool
-    created_at: str
-    product_count: Optional[int] = 0
+
 
 # Create new router for brands (separate from organisations)
 brand_router = APIRouter(prefix="/brands", tags=["brands"])
@@ -861,17 +858,21 @@ async def update_brand(
     
     if brand_update.name is not None:
         brand.name = brand_update.name
+    if brand_update.organisation_id is not None:
+        brand.organisation_id = brand_update.organisation_id
     if brand_update.company_id is not None:
         # Verify company belongs to same organisation
         from db.models.company import Company
         company_result = await db.execute(
-            select(Company).where(and_(Company.id == brand_update.company_id, Company.organisation_id == brand.organisation_id))
+            select(Company).where(and_(Company.id == brand_update.company_id, Company.organisation_id == (brand_update.organisation_id if brand_update.organisation_id else brand.organisation_id)))
         )
         if not company_result.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Invalid company ID for this organisation")
         brand.company_id = brand_update.company_id
     if brand_update.description is not None:
         brand.description = brand_update.description
+    if brand_update.logo_url is not None:
+        brand.logo_url = brand_update.logo_url
     if brand_update.is_active is not None:
         brand.is_active = brand_update.is_active
     
@@ -884,6 +885,7 @@ async def update_brand(
         "organisation_id": brand.organisation_id,
         "company_id": brand.company_id,
         "description": brand.description,
+        "logo_url": brand.logo_url,
         "is_active": brand.is_active,
         "created_at": brand.created_at.isoformat() if brand.created_at else None
     }
@@ -1468,8 +1470,9 @@ async def upload_products_csv(
         return new_b
 
     # Determine default brand from name if provided and ID is not
-    if not default_brand and brand_name and user_org_id:
-        default_brand = await get_or_create_brand(brand_name, user_org_id, company_id)
+    effective_org_id = target_company.organisation_id
+    if not default_brand and brand_name and effective_org_id:
+        default_brand = await get_or_create_brand(brand_name, effective_org_id, company_id)
 
     success_count = 0
     errors = []
@@ -1511,16 +1514,16 @@ async def upload_products_csv(
                 row_brand_name = row.get('brand_name') or brand_name
                 current_row_brand = default_brand
                 
-                if row_brand_name and user_org_id:
+                if row_brand_name and effective_org_id:
                     if row_brand_name in brand_cache:
                         current_row_brand = brand_cache[row_brand_name]
                     else:
-                        current_row_brand = await get_or_create_brand(row_brand_name, user_org_id, company_id)
+                        current_row_brand = await get_or_create_brand(row_brand_name, effective_org_id, company_id)
                         brand_cache[row_brand_name] = current_row_brand
 
                 if not current_row_brand:
                     # Fallback to organisation level if no brand info
-                    target_org_id = user_org_id
+                    target_org_id = effective_org_id
                     target_brand_id = None
                     target_company_id = company_id
                 else:

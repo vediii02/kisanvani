@@ -4,6 +4,56 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Plus, Edit2, Trash2, Search, Filter, AlertCircle, X, Upload, Download, FileText } from 'lucide-react';
 import api from '../api/api';
 
+// Category and Sub-category mapping
+const CATEGORY_OPTIONS = {
+  Pesticide: [
+    "Insecticide",
+    "Fungicide",
+    "Herbicide",
+    "Nematicide",
+    "Acaricide",
+    "Molluscicide",
+  ],
+  Fertilizer: [
+    "NPK",
+    "Organic",
+    "Micronutrient",
+    "Liquid Fertilizer",
+    "Foliar Spray",
+    "Biofertilizer",
+  ],
+  Seed: [
+    "Hybrid",
+    "Open Pollinated",
+    "GMO",
+    "Certified Seed",
+    "Indigenous Variety",
+  ],
+  Equipment: [
+    "Sprayer",
+    "Drip Irrigation",
+    "Mulcher",
+    "Harvester",
+    "Seeder",
+    "Others",
+  ],
+  "Growth Regulator": [
+    "Plant Hormone",
+    "Nutrient Booster",
+    "Root Promoter",
+    "Stress Relief",
+    "Yield Enhancer",
+  ],
+  Bioproduct: [
+    "Bioinsecticide",
+    "Biofungicide",
+    "Bio-Nematicide",
+    "Biofertilizer",
+    "Bio-Stimulant",
+  ],
+  Other: ["General", "Miscellaneous"],
+};
+
 const OrganisationProducts = () => {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
@@ -484,23 +534,33 @@ const OrganisationProducts = () => {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
-                  <input
-                    type="text"
+                  <select
                     value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value, sub_category: '' })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     required
-                  />
+                  >
+                    <option value="" disabled>Select Category</option>
+                    {Object.keys(CATEGORY_OPTIONS).map((cat) => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Sub Category</label>
-                  <input
-                    type="text"
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Sub Category *</label>
+                  <select
                     value={formData.sub_category}
                     onChange={(e) => setFormData({ ...formData, sub_category: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  />
+                    disabled={!formData.category}
+                    required
+                  >
+                    <option value="" disabled>Select Sub Category</option>
+                    {formData.category && CATEGORY_OPTIONS[formData.category]?.map((sub) => (
+                      <option key={sub} value={sub}>{sub}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -549,13 +609,14 @@ const OrganisationProducts = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Price Range</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Price Range *</label>
                   <input
                     type="text"
                     value={formData.price_range}
                     onChange={(e) => setFormData({ ...formData, price_range: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     placeholder="e.g., ₹500-1000"
+                    required
                   />
                 </div>
               </div>
@@ -699,7 +760,7 @@ const OrganisationProducts = () => {
                 </p>
               </div>
 
-              {/* Default Brand Name */}
+              {/* Default Brand Name
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Default Brand Name (Optional)
@@ -715,7 +776,7 @@ const OrganisationProducts = () => {
                 <p className="text-xs text-gray-500 mt-1">
                   If your CSV doesn't have 'brand_name' column, this will be used
                 </p>
-              </div>
+              </div> */}
 
               {/* File Upload */}
               <div>
