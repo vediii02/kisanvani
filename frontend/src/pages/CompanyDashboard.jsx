@@ -208,7 +208,7 @@ export default function CompanyDashboard() {
             className="cursor-pointer border border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-200 group"
             onClick={() => navigate('/company/brands')}
           >
-            <CardHeader shadow={false}>
+            <CardHeader>
               <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-200">
                 <Tag className="h-6 w-6" />
               </div>
@@ -221,7 +221,7 @@ export default function CompanyDashboard() {
             className="cursor-pointer border border-slate-200 bg-white shadow-sm hover:shadow-md hover:border-slate-300 transition-all duration-200 group"
             onClick={() => navigate('/company/products')}
           >
-            <CardHeader shadow={false}>
+            <CardHeader>
               <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-2 group-hover:scale-110 transition-transform duration-200">
                 <Package className="h-6 w-6" />
               </div>
@@ -231,7 +231,7 @@ export default function CompanyDashboard() {
           </Card>
 
           <Card className="border border-slate-200 bg-slate-50/50 shadow-sm opacity-80">
-            <CardHeader shadow={false}>
+            <CardHeader>
               <div className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center mb-2">
                 <BarChart className="h-6 w-6" />
               </div>

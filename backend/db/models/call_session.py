@@ -5,9 +5,9 @@ from db.base import Base
 import enum
 
 class CallStatus(str, enum.Enum):
-    ACTIVE = "active"
-    COMPLETED = "completed"
-    FAILED = "failed"
+    ACTIVE = "ACTIVE"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class CallSession(Base):
     __tablename__ = "call_sessions"

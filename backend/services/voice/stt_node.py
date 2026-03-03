@@ -1,0 +1,183 @@
+import asyncio
+import base64
+import os
+import sys
+import json
+from typing import AsyncIterator
+from dotenv import load_dotenv
+
+from sarvamai import AsyncSarvamAI
+import websockets
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from services.voice.events import VoiceAgentEvent, STTChunkEvent, STTOutputEvent, BargeInEvent, CallStartedEvent
+from services.voice.logger import setup_logger
+
+logger = setup_logger("stt_node")
+
+load_dotenv()
+
+class SarvamSTT:
+    def __init__(self, sample_rate: int = 8000):
+        self.api_key = os.getenv("SARVAM_API_KEY")
+        self.sample_rate = sample_rate
+        self.language_code = "hi-IN"
+        self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
+        self._ws_context = None
+        self._ws = None
+        self._conn_lock = asyncio.Lock()
+        self._ping_task = None
+        # Threshold for barge-in sensitivity (min characters)
+        try:
+            self.barge_in_threshold = int(os.getenv("BARGE_IN_THRESHOLD", "10"))
+        except ValueError:
+            self.barge_in_threshold = 10
+
+    async def _ping_loop(self):
+        try:
+            while True:
+                await asyncio.sleep(15)
+                async with self._conn_lock:
+                    if self._ws and hasattr(self._ws, "_websocket"):
+                        await self._ws._websocket.ping()
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    async def _ensure_connection(self):
+        async with self._conn_lock:
+            if self._ws is None:
+                logger.info(f"Connecting to SarvamAI (Rate: {self.sample_rate})...")
+                try:
+                    self._ws_context = self.client.speech_to_text_streaming.connect(
+                        language_code=self.language_code,
+                        sample_rate=str(self.sample_rate),
+                        input_audio_codec="pcm_s16le"
+                    )
+                    self._ws = await self._ws_context.__aenter__()
+                    logger.info("Connected.")
+                    self._ping_task = asyncio.create_task(self._ping_loop())
+                except Exception as e:
+                    logger.error(f"Connection Failed: {e}", exc_info=True)
+                    self._ws = None # Ensure it's None on failure
+                    raise # Re-raise to let the caller handle it
+        return self._ws
+
+    async def send_audio(self, audio_chunk: bytes) -> None:
+        if not audio_chunk:
+            return
+        try:
+            ws = await self._ensure_connection()
+            if not ws:
+                return
+            
+            b64_audio = base64.b64encode(audio_chunk).decode("utf-8")
+            payload = {
+                "audio": {
+                    "data": b64_audio,
+                    "encoding": "audio/wav", # Mandated by Sarvam server
+                    "sample_rate": self.sample_rate
+                }
+            }
+            # Send raw JSON to bypass Pydantic validation
+            await self._ws._websocket.send(json.dumps(payload))
+        except Exception as e:
+            logger.error(f"Send Error: {e}", exc_info=True)
+            # Optionally trigger reconnect logic here if needed for long-running sessions
+
+    async def receive_events(self) -> AsyncIterator[VoiceAgentEvent]:
+        try:
+            ws = await self._ensure_connection()
+            if not ws:
+                return
+        except Exception as e:
+            logger.error(f"Could not establish connection for receiving: {e}", exc_info=True)
+            return
+
+        last_yielded_transcript = ""
+        pending_transcript = ""
+        
+        try:
+            while True:
+                try:
+                    message = await asyncio.wait_for(ws.recv(), timeout=1.5)
+                    
+                    data = getattr(message, "data", None)
+                    if data and hasattr(data, "transcript"):
+                        transcript = data.transcript
+                        if not transcript or transcript == last_yielded_transcript:
+                            continue
+                        
+                        last_yielded_transcript = transcript
+                        pending_transcript = transcript
+                        is_final = any(p in transcript for p in ["।", ".", "?", "!"])
+                        
+                        logger.info(f"Raw: {transcript} (final={is_final})")
+                        
+                        # Only yield BargeIn if intent is detected (at least 2 words or long enough)
+                        words = transcript.strip().split()
+                        if len(words) >= 2 or len(transcript) >= self.barge_in_threshold:
+                            yield BargeInEvent.create()
+                        
+                        if is_final:
+                            yield STTOutputEvent.create(transcript=transcript)
+                            pending_transcript = ""  # Cleared because it was final
+                        else:
+                            yield STTChunkEvent.create(transcript=transcript)
+                    else:
+                        logger.info(f"Unknown Msg: {message}")
+                        
+                except asyncio.TimeoutError:
+                    # User stopped speaking for 1.5s. If we have pending text, make it final
+                    if pending_transcript:
+                        logger.info(f"Silence timeout. Flushing as final: {pending_transcript}")
+                        yield STTOutputEvent.create(transcript=pending_transcript)
+                        pending_transcript = ""
+                        last_yielded_transcript = ""  # Reset so next utterance isn't skipped if identical
+
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.info(f"WebSocket closed: {e.code}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Receiver Loop Error: {e}", exc_info=True)
+
+    async def close(self):
+        async with self._conn_lock:
+            if self._ping_task:
+                self._ping_task.cancel()
+                self._ping_task = None
+            if self._ws_context:
+                try:
+                    await self._ws_context.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.warning("STT socket close warning: %s", e)
+                self._ws = None
+                self._ws_context = None
+                logger.info("Connection closed.")
+
+async def stt_stream(
+    audio_stream: AsyncIterator[bytes],
+) -> AsyncIterator[VoiceAgentEvent]:
+    # Yield CallStartedEvent IMMEDIATELY to kick off the pipeline chain
+    # Without this, agent_stream never starts because silence produces no STT events
+    yield CallStartedEvent.create()
+
+    stt = SarvamSTT(sample_rate=8000)
+    
+    async def send_audio_task():
+        try:
+            async for chunk in audio_stream:
+                await stt.send_audio(chunk)
+        except Exception as e:
+            logger.error(f"Task Error: {e}", exc_info=True)
+        finally:
+            await stt.close()
+
+    sender = asyncio.create_task(send_audio_task())
+    
+    try:
+        async for event in stt.receive_events():
+            yield event
+    finally:
+        sender.cancel()
+        await stt.close()

@@ -1,7 +1,7 @@
 """merge_heads_20260130
 
 Revision ID: 92b079f0dbab
-Revises: 20260130_add_crop_age_days_to_farmer, 20260130_add_organisation_kb_files
+Revises: 20260130_crop_age_days, 20260130_org_kb_files
 Create Date: 2026-02-25 05:35:14.703064
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '92b079f0dbab'
-down_revision: Union[str, Sequence[str], None] = ('20260130_add_crop_age_days_to_farmer', '20260130_add_organisation_kb_files')
+down_revision: Union[str, Sequence[str], None] = ('20260130_crop_age_days', '20260130_org_kb_files')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

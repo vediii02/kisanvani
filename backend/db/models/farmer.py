@@ -4,8 +4,8 @@ from db.base import Base
 import enum
 
 class FarmerStatus(str, enum.Enum):
-    ACTIVE = "active"
-    INACTIVE = "inactive"
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
 
 class Farmer(Base):
     __tablename__ = "farmers"

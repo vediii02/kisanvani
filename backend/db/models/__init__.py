@@ -12,6 +12,7 @@ from .product import Product
 from .brand import Brand
 from .kb_entry import KBEntry
 from .organisation_kb import OrganisationKnowledgeBase
+from .knowledge_base import KnowledgeEntry
 from .advisory import Advisory
 from .call_session import CallSession
 from .call_state import CallState
@@ -34,6 +35,7 @@ __all__ = [
     "Brand",
     "KBEntry",
     "OrganisationKnowledgeBase",
+    "KnowledgeEntry",
     "Advisory",
     "CallSession",
     "CallState",

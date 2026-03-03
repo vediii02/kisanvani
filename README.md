@@ -23,7 +23,8 @@ An intelligent voice-based agricultural advisory platform designed to help India
 - **MySQL Database**: Reliable data storage with SQLAlchemy ORM
 - **Authentication**: JWT-based secure authentication
 - **API Documentation**: Auto-generated OpenAPI/Swagger docs
-- **Mock Advisory Service**: Agricultural advice without external API dependencies
+- **Real-time Pipeline**: Event-driven streaming voice pipeline consisting of independent nodes (STT, LLM, TTS, Voice Processing)
+- **External Integration**: Exotel integration for multi-tenant phone handling
 
 ## 🏗️ Architecture
 
@@ -40,7 +41,7 @@ Super Admin
 ### Technology Stack
 
 #### Frontend
-- **React 18** - Modern UI framework
+- **React 19** - Modern UI framework
 - **TailwindCSS** - Utility-first CSS framework
 - **shadcn/ui** - Pre-built React components
 - **React Router** - Client-side routing
@@ -55,10 +56,8 @@ Super Admin
 - **JWT** - Authentication tokens
 - **Alembic** - Database migrations
 
-#### Infrastructure
-- **Docker & Docker Compose** - Container orchestration
-- **Nginx** - Reverse proxy (if needed)
-- **phpMyAdmin** - Database management interface
+- **LLMs & GenAI**: Sarvam AI tools and Groq used for low-latency streaming TTS, LLM responses
+- **Docker & Docker Compose** - Container orchestration alongside PGVector for vector embeddings
 
 ## 🚀 Quick Start
 
@@ -78,8 +77,8 @@ docker-compose up -d --build
 # Access the application
 # Frontend: http://localhost:3001
 # Backend API: http://localhost:8001
-# API Docs: http://localhost:8001/docs
-# Database Admin: http://localhost:8081
+# PostgreSQL: Exposed on port 5434
+# PGAdmin: http://localhost:8081
 ```
 
 ### Environment Variables
@@ -185,11 +184,15 @@ ACCESS_TOKEN_EXPIRE_MINUTES=30
 - Text-to-speech response
 - Call session logging
 
-### Mock Advisory System
-- Pre-defined responses for common wheat problems
-- Keyword-based query matching
-- Hindi language support
-- Confidence scoring
+### Streaming AI Architecture (Active)
+- 6-Node deterministic state machine pipeline for rapid speech turn-taking
+- Configured dynamic models dynamically driven by organisation profile
+- Real-time chunking mapping text streams to LLM content
+- Sarvam AI and Groq optimized node instances
+
+### Provider Integration (Exotel)
+- Robust mapping for inbound/outbound IVR processes
+- Connect numbers directly to corresponding brands/orgs
 
 ## 🔧 Development
 

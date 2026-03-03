@@ -145,10 +145,9 @@ def upgrade():
     existing_product_columns = [col['name'] for col in inspector.get_columns('products')]
     
     if 'approval_status' not in existing_product_columns:
-        op.add_column('products', sa.Column('approval_status', sa.Enum(
-            'pending', 'approved', 'banned',
-            name='approval_status_enum'
-        ), server_default='pending'))
+        approval_status_enum = sa.Enum('pending', 'approved', 'banned', name='approval_status_enum')
+        approval_status_enum.create(op.get_bind(), checkfirst=True)
+        op.add_column('products', sa.Column('approval_status', approval_status_enum, server_default='pending'))
     if 'approved_by' not in existing_product_columns:
         op.add_column('products', sa.Column('approved_by', sa.Integer(), nullable=True))
     if 'approved_at' not in existing_product_columns:
@@ -176,7 +175,9 @@ def upgrade():
     if 'exotel_call_sid' not in existing_call_columns:
         op.add_column('call_sessions', sa.Column('exotel_call_sid', sa.String(100), nullable=True))
     if 'call_direction' not in existing_call_columns:
-        op.add_column('call_sessions', sa.Column('call_direction', sa.Enum('inbound', 'outbound', name='call_direction_enum'), server_default='inbound'))
+        call_direction_enum = sa.Enum('inbound', 'outbound', name='call_direction_enum')
+        call_direction_enum.create(op.get_bind(), checkfirst=True)
+        op.add_column('call_sessions', sa.Column('call_direction', call_direction_enum, server_default='inbound'))
 
 
 def downgrade():

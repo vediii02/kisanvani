@@ -1,20 +1,19 @@
 # version: "3.9"
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: kisanvani_mysql
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: kisanvani_postgres
     environment:
-      MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: kisanvani_db
-      MYSQL_USER: kisanvani
-      MYSQL_PASSWORD: kisanvani2025
+      POSTGRES_PASSWORD: rootpassword
+      POSTGRES_DB: kisanvani
+      POSTGRES_USER: kisanvani
     ports:
-      - "3308:3306"
+      - "5434:5432"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD-SHELL", "pg_isready -U kisanvani -d kisanvani"]
       interval: 10s
       timeout: 20s
       retries: 10
@@ -36,19 +35,6 @@ services:
     networks:
       - kisanvani_network
 
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: kisanvani_qdrant
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    environment:
-      QDRANT__SERVICE__GRPC_PORT: 6334
-    networks:
-      - kisanvani_network
-
   backend:
     build:
       context: ./backend
@@ -56,35 +42,32 @@ services:
     container_name: kisanvani_backend
     ports:
       - "8001:8001"
+    env_file:
+      - .env
 
     environment:
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_USER: kisanvani
-      MYSQL_PASSWORD: kisanvani2025
-      MYSQL_DATABASE: kisanvani_db
+      PG_HOST: kisanvani_postgres
+      PG_PORT: 5432
+      PG_USER: kisanvani
+      PG_PASSWORD: rootpassword
+      PG_DATABASE: kisanvani
+      DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@kisanvani_postgres:5432/kisanvani
       REDIS_URL: redis://redis:6379
-      QDRANT_URL: http://kisanvani_qdrant:6333
       CORS_ORIGINS: http://localhost:3001,http://34.47.250.57:3001,https://kisan.rechargestudio.com,http://kisan.rechargestudio.com
 
-      DEFAULT_STT_PROVIDER: "mock"
+      DEFAULT_STT_PROVIDER: "sarvam"
       DEFAULT_TTS_PROVIDER: "sarvam"
       DEFAULT_LLM_PROVIDER: "groq"
       DEFAULT_LLM_MODEL: "llama3-70b-8192"
 
       GOOGLE_APPLICATION_CREDENTIALS: /app/google-creds.json
-      GEMINI_API_KEY: AIzaSyD5m75OxsDEIRwLNzAoZNaQr8xMqy_PpKE
-      # GOOGLE_TTS_API_KEY: AIzaSyD5m75OxsDEIRwLNzAoZNaQr8xMqy_PpKE
-      SARVAM_API_KEY: sk_vpsvifvu_C8wVqzrI25ok2FsWBxizKaFT
       BASE_URL: https://kisan.rechargestudio.com
 
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_started
 
     volumes:
       - ./backend:/app
@@ -125,24 +108,22 @@ services:
     networks:
       - kisanvani_network
 
-  phpmyadmin:
-    image: phpmyadmin/phpmyadmin
-    container_name: kisanvani_phpmyadmin
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: kisanvani_pgadmin
     ports:
       - "8081:80"
     environment:
-      PMA_HOST: kisanvani_mysql
-      PMA_PORT: 3306
-      MYSQL_ROOT_PASSWORD: rootpassword
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: root
     depends_on:
-      - mysql
+      - postgres
     networks:
       - kisanvani_network
 
 volumes:
-  mysql_data:
+  pgdata:
   redis_data:
-  qdrant_data:
 
 networks:
   kisanvani_network:

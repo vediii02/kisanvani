@@ -7,22 +7,29 @@ load_dotenv(ROOT_DIR / '.env')
 
 class Settings:
     # Database
-    MYSQL_HOST: str = os.getenv('MYSQL_HOST', 'localhost')
-    MYSQL_PORT: int = int(os.getenv('MYSQL_PORT', '3306'))
-    MYSQL_USER: str = os.getenv('MYSQL_USER', 'root')
-    MYSQL_PASSWORD: str = os.getenv('MYSQL_PASSWORD', '')
-    MYSQL_DATABASE: str = os.getenv('MYSQL_DATABASE', 'kisanvani_db')
+    PG_HOST: str = os.getenv('PG_HOST', 'localhost')
+    PG_PORT: int = int(os.getenv('PG_PORT', '5432'))
+    PG_USER: str = os.getenv('PG_USER', 'postgres')
+    PG_PASSWORD: str = os.getenv('PG_PASSWORD', 'postgres')
+    PG_DATABASE: str = os.getenv('PG_DATABASE', 'kisanvani')
     
     @property
     def DATABASE_URL(self) -> str:
-        return f"mysql+aiomysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
+        return f"postgresql+asyncpg://{self.PG_USER}:{self.PG_PASSWORD}@{self.PG_HOST}:{self.PG_PORT}/{self.PG_DATABASE}"
     
     # Redis
-    REDIS_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379')
+    REDIS_HOST: str = os.getenv('REDIS_HOST', 'localhost')
+    REDIS_PORT: int = int(os.getenv('REDIS_PORT', '6379'))
+
+    @property
+    def REDIS_URL(self) -> str:
+        explicit_redis_url = os.getenv('REDIS_URL')
+        if explicit_redis_url:
+            return explicit_redis_url
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}"
     
-    # Qdrant
-    QDRANT_URL: str = os.getenv('QDRANT_URL', 'http://localhost:6333')
-    QDRANT_COLLECTION: str = 'agricultural_kb'
+    # PGVector Embeddings
+    PG_VECTOR_DIM: int = int(os.getenv('PG_VECTOR_DIM', '1536'))
     
     # LLM
     EMERGENT_LLM_KEY: str = os.getenv('EMERGENT_LLM_KEY', '')

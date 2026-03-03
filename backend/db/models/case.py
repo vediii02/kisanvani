@@ -4,10 +4,10 @@ from db.base import Base
 import enum
 
 class CaseStatus(str, enum.Enum):
-    OPEN = "open"
-    IN_PROGRESS = "in_progress"
-    RESOLVED = "resolved"
-    ESCALATED = "escalated"
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+    ESCALATED = "ESCALATED"
 
 class Case(Base):
     __tablename__ = "cases"

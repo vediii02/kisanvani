@@ -1,7 +1,7 @@
 """
 Add advisory fields to call_sessions table
 
-Revision ID: add_advisory_fields_to_call_sessions
+Revision ID: add_adv_fields_callsess
 Revises: 
 Create Date: 2026-01-28
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = 'add_advisory_fields_to_call_sessions'
+revision = 'add_adv_fields_callsess'
 down_revision = None
 branch_labels = None
 depends_on = None

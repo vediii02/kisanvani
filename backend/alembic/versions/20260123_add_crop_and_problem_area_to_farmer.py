@@ -1,7 +1,7 @@
 """
 Add crop_area and problem_area columns to farmers table
 
-Revision ID: 20260123_add_crop_and_problem_area_to_farmer
+Revision ID: 20260123_crop_problem
 Revises: 003_call_flow
 Create Date: 2026-01-23
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '20260123_add_crop_and_problem_area_to_farmer'
+revision = '20260123_crop_problem'
 down_revision = '003_call_flow'
 branch_labels = None
 depends_on = None

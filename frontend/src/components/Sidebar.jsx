@@ -92,7 +92,7 @@ export default function Sidebar() {
           );
         })}
 
-        {user?.role === 'admin' && (
+        {(user?.role === 'admin' || user?.role === 'superadmin') && (
           <>
             <div className="mb-2 px-4 text-xs opacity-70 font-medium uppercase tracking-wider">
               Admin Panel

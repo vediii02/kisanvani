@@ -4,10 +4,10 @@ from db.base import Base
 import enum
 
 class EscalationStatus(str, enum.Enum):
-    PENDING = "pending"
-    IN_REVIEW = "in_review"
-    RESOLVED = "resolved"
-    REJECTED = "rejected"
+    PENDING = "PENDING"
+    IN_REVIEW = "IN_REVIEW"
+    RESOLVED = "RESOLVED"
+    REJECTED = "REJECTED"
 
 class Escalation(Base):
     __tablename__ = "escalations"

@@ -1,10 +1,10 @@
 """
-Revision ID: 20260130_add_crop_age_days_to_farmer
+Revision ID: 20260130_crop_age_days
 Revises: 20260130_add_farmer_questions
 Create Date: 2026-01-30
 """
 
-revision = '20260130_add_crop_age_days_to_farmer'
+revision = '20260130_crop_age_days'
 down_revision = '20260130_add_farmer_questions'
 branch_labels = None
 depends_on = None

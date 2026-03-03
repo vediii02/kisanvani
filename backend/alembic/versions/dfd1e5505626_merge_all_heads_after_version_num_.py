@@ -1,7 +1,7 @@
 """merge all heads after version_num length fix
 
 Revision ID: dfd1e5505626
-Revises: 20260123_alter_alembic_version_num_length, 5489c0a62b1e
+Revises: 20260123_alembic_vnum, 5489c0a62b1e
 Create Date: 2026-01-23 05:43:25.353849
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'dfd1e5505626'
-down_revision: Union[str, Sequence[str], None] = ('20260123_alter_alembic_version_num_length', '5489c0a62b1e')
+down_revision: Union[str, Sequence[str], None] = ('20260123_alembic_vnum', '5489c0a62b1e')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

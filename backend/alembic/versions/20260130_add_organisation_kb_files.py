@@ -5,8 +5,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision = '20260130_add_organisation_kb_files'
-down_revision = '20260130_add_organisation_id_to_kb_entries'
+revision = '20260130_org_kb_files'
+down_revision = '20260130_org_id_kb'
 branch_labels = None
 depends_on = None
 

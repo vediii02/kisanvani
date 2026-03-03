@@ -11,18 +11,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.config import settings
 from db.base import Base
-from db.models.organisation import Organisation
-from db.models.organisation_phone import OrganisationPhoneNumber
-from db.models.company import Company  # Multi-tenant company model
-from db.models.farmer import Farmer
-from db.models.call_session import CallSession
-from db.models.case import Case
-from db.models.advisory import Advisory
-from db.models.kb_entry import KBEntry
-from db.models.escalation import Escalation
-from db.models.user import User
-from db.models.product import Product
-from db.models.brand import Brand
+from db.models.organisation import Organisation  # noqa: F401
+from db.models.organisation_phone import OrganisationPhoneNumber  # noqa: F401
+from db.models.company import Company  # noqa: F401
+from db.models.farmer import Farmer  # noqa: F401
+from db.models.call_session import CallSession  # noqa: F401
+from db.models.call_state import CallState  # noqa: F401
+from db.models.call_transcript import CallTranscript  # noqa: F401
+from db.models.call_metrics import CallMetrics  # noqa: F401
+from db.models.call_summary import CallSummary  # noqa: F401
+from db.models.case import Case  # noqa: F401
+from db.models.advisory import Advisory  # noqa: F401
+from db.models.kb_entry import KBEntry  # noqa: F401
+try:
+    from db.models.knowledge_base import KnowledgeEntry  # noqa: F401
+except Exception:
+    # Allow migrations to run even if optional pgvector Python package
+    # is unavailable in the execution environment.
+    KnowledgeEntry = None  # noqa: F401
+from db.models.escalation import Escalation  # noqa: F401
+from db.models.user import User  # noqa: F401
+from db.models.product import Product  # noqa: F401
+from db.models.brand import Brand  # noqa: F401
+from db.models.organisation_kb import OrganisationKnowledgeBase  # noqa: F401
+from db.models.audit import AuditLog, PlatformConfig, BannedProduct  # noqa: F401
+from db.models.farmer_query import FarmerQuery  # noqa: F401
+from db.models.farmer_questions import FarmerQuestion  # noqa: F401
 
 config = context.config
 config.set_main_option('sqlalchemy.url', settings.DATABASE_URL)

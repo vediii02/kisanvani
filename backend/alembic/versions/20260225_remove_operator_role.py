@@ -18,11 +18,10 @@ def upgrade():
         WHERE role = 'operator'
     """)
     
-    # Update company model comment to reflect new hierarchy
-    op.execute("""
-        ALTER TABLE companies 
-        MODIFY COLUMN max_operators INT COMMENT 'Max company users allowed'
-    """)
+    # PostgreSQL-compatible column comment update
+    op.execute(
+        "COMMENT ON COLUMN companies.max_operators IS 'Max company users allowed'"
+    )
 
 def downgrade():
     # Revert company users back to operator role
@@ -32,8 +31,7 @@ def downgrade():
         WHERE role = 'company'
     """)
     
-    # Revert company model comment
-    op.execute("""
-        ALTER TABLE companies 
-        MODIFY COLUMN max_operators INT COMMENT 'Max operators allowed for this company'
-    """)
+    # Revert PostgreSQL column comment
+    op.execute(
+        "COMMENT ON COLUMN companies.max_operators IS 'Max operators allowed for this company'"
+    )
