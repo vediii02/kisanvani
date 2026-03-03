@@ -29,7 +29,8 @@ const OrganisationBrands = () => {
   const fetchCompanies = async () => {
     try {
       const response = await api.get('/organisation/companies');
-      setCompanies(response.data);
+      // The backend returns a paginated response with a 'companies' array
+      setCompanies(response.data.companies || []);
     } catch (err) {
       console.error('Failed to load companies:', err);
     }
@@ -248,14 +249,15 @@ const OrganisationBrands = () => {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Company Associate (Optional)
+                  Company Associate *
                 </label>
                 <select
                   value={formData.company_id}
                   onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  required
                 >
-                  <option value="">No Company (Organisation Level)</option>
+                  <option value="" disabled>Select a company</option>
                   {companies.map((company) => (
                     <option key={company.id} value={company.id}>
                       {company.name}

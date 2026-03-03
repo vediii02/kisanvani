@@ -4,24 +4,29 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye, UserPlus, Ban } from 'lucide-react';
 import api from '@/api/api';
 
 export default function PendingApprovals() {
   const [loading, setLoading] = useState(true);
   const [approvals, setApprovals] = useState([]);
+  const [todayRegistrations, setTodayRegistrations] = useState([]);
+  const [todayRejections, setTodayRejections] = useState([]);
   const [processing, setProcessing] = useState({});
   const [stats, setStats] = useState({
     pending_count: 0,
     approved_count: 0,
     rejected_count: 0,
     today_registrations: 0,
+    today_rejections: 0,
     total_organisations: 0
   });
 
   useEffect(() => {
     fetchPendingApprovals();
     fetchApprovalStats();
+    fetchTodayRegistrations();
+    fetchTodayRejections();
   }, []);
 
   const fetchPendingApprovals = async () => {
@@ -47,18 +52,39 @@ export default function PendingApprovals() {
     }
   };
 
+  const fetchTodayRegistrations = async () => {
+    try {
+      const response = await api.get('/superadmin/today-registrations');
+      setTodayRegistrations(response.data.today_registrations || []);
+    } catch (error) {
+      console.error('Error fetching today registrations:', error);
+    }
+  };
+
+  const fetchTodayRejections = async () => {
+    try {
+      const response = await api.get('/superadmin/today-rejections');
+      setTodayRejections(response.data.today_rejections || []);
+    } catch (error) {
+      console.error('Error fetching today rejections:', error);
+    }
+  };
+
   const handleApprove = async (userId) => {
     try {
       setProcessing(prev => ({ ...prev, [userId]: true }));
-      
+
       await api.post(`/superadmin/approve-user/${userId}`);
-      
+
       // Update local state
       setApprovals(prev => prev.filter(item => item.id !== userId));
-      
-      // Refresh stats
-      await fetchApprovalStats();
-      
+
+      // Refresh all data
+      await Promise.all([
+        fetchApprovalStats(),
+        fetchTodayRegistrations(),
+      ]);
+
       toast.success('User approved successfully!');
     } catch (error) {
       console.error('Error approving user:', error);
@@ -71,15 +97,19 @@ export default function PendingApprovals() {
   const handleReject = async (userId) => {
     try {
       setProcessing(prev => ({ ...prev, [userId]: true }));
-      
+
       await api.post(`/superadmin/reject-user/${userId}`);
-      
+
       // Update local state
       setApprovals(prev => prev.filter(item => item.id !== userId));
-      
-      // Refresh stats
-      await fetchApprovalStats();
-      
+
+      // Refresh all data
+      await Promise.all([
+        fetchApprovalStats(),
+        fetchTodayRegistrations(),
+        fetchTodayRejections(),
+      ]);
+
       toast.success('User rejected successfully!');
     } catch (error) {
       console.error('Error rejecting user:', error);
@@ -91,6 +121,31 @@ export default function PendingApprovals() {
 
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString();
+  };
+
+  const getStatusBadge = (orgStatus, isActive) => {
+    if (orgStatus === 'active' && isActive) {
+      return (
+        <Badge variant="secondary" className="bg-green-100 text-green-800">
+          <CheckCircle className="h-3 w-3 mr-1" />
+          Approved
+        </Badge>
+      );
+    }
+    if (orgStatus === 'rejected') {
+      return (
+        <Badge variant="secondary" className="bg-red-100 text-red-800">
+          <XCircle className="h-3 w-3 mr-1" />
+          Rejected
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+        <Clock className="h-3 w-3 mr-1" />
+        Pending
+      </Badge>
+    );
   };
 
   if (loading) {
@@ -120,7 +175,7 @@ export default function PendingApprovals() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-5 mb-6">
+      <div className="grid gap-4 md:grid-cols-6 mb-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Pending</CardTitle>
@@ -131,7 +186,7 @@ export default function PendingApprovals() {
             <p className="text-xs text-muted-foreground">Awaiting approval</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Approved</CardTitle>
@@ -142,7 +197,7 @@ export default function PendingApprovals() {
             <p className="text-xs text-muted-foreground">Total approved</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Rejected</CardTitle>
@@ -153,18 +208,29 @@ export default function PendingApprovals() {
             <p className="text-xs text-muted-foreground">Total rejected</p>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Today's Registrations</CardTitle>
+            <UserPlus className="h-4 w-4 text-blue-600" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.today_registrations}</div>
-            <p className="text-xs text-muted-foreground">New registrations</p>
+            <p className="text-xs text-muted-foreground">New today</p>
           </CardContent>
         </Card>
-        
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Today's Rejections</CardTitle>
+            <Ban className="h-4 w-4 text-red-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{stats.today_rejections}</div>
+            <p className="text-xs text-muted-foreground">Rejected today</p>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total</CardTitle>
@@ -178,7 +244,7 @@ export default function PendingApprovals() {
       </div>
 
       {/* Pending Approvals Table */}
-      <Card>
+      <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Building2 className="h-5 w-5" />
@@ -276,6 +342,150 @@ export default function PendingApprovals() {
                           )}
                         </Button>
                       </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Today's New Registrations Table */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserPlus className="h-5 w-5 text-blue-600" />
+            Today's New Registrations
+          </CardTitle>
+          <CardDescription>
+            All organisation admin registrations received today
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {todayRegistrations.length === 0 ? (
+            <div className="text-center py-8">
+              <UserPlus className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Registrations Today</h3>
+              <p className="text-muted-foreground">No new organisation registrations have been received today.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User Details</TableHead>
+                  <TableHead>Organisation</TableHead>
+                  <TableHead>Registration Time</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {todayRegistrations.map((reg) => (
+                  <TableRow key={reg.id}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{reg.full_name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Mail className="h-3 w-3" />
+                          <span>{reg.email}</span>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          @{reg.username}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="font-medium">{reg.organisation_name}</div>
+                        <Badge variant="outline" className="text-xs">
+                          {reg.role}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {formatDate(reg.created_at)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(reg.org_status, reg.is_active)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Today's Rejected Users Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Ban className="h-5 w-5 text-red-600" />
+            Today's Rejected Users
+          </CardTitle>
+          <CardDescription>
+            Organisation registrations rejected today
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {todayRejections.length === 0 ? (
+            <div className="text-center py-8">
+              <Ban className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Rejections Today</h3>
+              <p className="text-muted-foreground">No organisation registrations have been rejected today.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User Details</TableHead>
+                  <TableHead>Organisation</TableHead>
+                  <TableHead>Registration Date</TableHead>
+                  <TableHead>Rejected At</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {todayRejections.map((rej) => (
+                  <TableRow key={rej.id}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium">{rej.full_name}</span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Mail className="h-3 w-3" />
+                          <span>{rej.email}</span>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          @{rej.username}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-medium">{rej.organisation_name}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {formatDate(rej.created_at)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {rej.rejected_at ? formatDate(rej.rejected_at) : '—'}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="bg-red-100 text-red-800">
+                        <XCircle className="h-3 w-3 mr-1" />
+                        Rejected
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))}

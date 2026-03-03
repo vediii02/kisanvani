@@ -70,6 +70,7 @@ export default function CompanyProductsPage() {
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showBulkUploadModal, setShowBulkUploadModal] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -223,18 +224,31 @@ export default function CompanyProductsPage() {
       );
 
       console.log("✅ Upload Response:", uploadRes.data);
+      setUploadResult(uploadRes.data);
 
-      toast.success(
-        `Products uploaded successfully! Imported: ${uploadRes.data?.results?.imported || 0}`,
-      );
+      const hasErrors = uploadRes.data?.error_count > 0 || uploadRes.data?.errors?.length > 0;
+
+      if (hasErrors) {
+        toast.warning(
+          `Imported: ${uploadRes.data?.success_count || 0}. Exists/Failed: ${uploadRes.data?.error_count || 0}`,
+          { duration: 5000 }
+        );
+      } else {
+        toast.success(
+          `Products uploaded successfully! Imported: ${uploadRes.data?.success_count || 0}`,
+        );
+        setTimeout(() => {
+          setShowBulkUploadModal(false);
+          setSelectedFile(null);
+          setUploadResult(null);
+        }, 1500);
+      }
 
       setTimeout(() => {
         console.log("🔄 Reloading products...");
         fetchData();
       }, 500);
 
-      setShowBulkUploadModal(false);
-      setSelectedFile(null);
       if (document.getElementById("file-input")) {
         document.getElementById("file-input").value = "";
       }
@@ -854,6 +868,27 @@ export default function CompanyProductsPage() {
                 </p>
               </div>
 
+              {/* Upload Result */}
+              {uploadResult && (
+                <div className={`p-4 rounded-lg mt-4 ${uploadResult.success_count > 0 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'}`}>
+                  <h3 className="font-semibold text-gray-900 mb-2">Upload Results:</h3>
+                  <div className="space-y-1 text-sm">
+                    <p className="text-green-700">✅ Imported: {uploadResult.success_count} products</p>
+                    <p className="text-red-700">❌ Failed/Skipped: {uploadResult.error_count}</p>
+                  </div>
+                  {uploadResult.errors && uploadResult.errors.length > 0 && (
+                    <div className="mt-3 max-h-32 overflow-y-auto bg-white p-2 border border-red-100 rounded">
+                      <p className="text-xs font-semibold text-red-800 mb-1">Errors:</p>
+                      {uploadResult.errors.map((err, idx) => (
+                        <p key={idx} className="text-xs text-red-700">
+                          {err}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <button
                 onClick={downloadTemplate}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
@@ -884,6 +919,7 @@ export default function CompanyProductsPage() {
                 onClick={() => {
                   setShowBulkUploadModal(false);
                   setSelectedFile(null);
+                  setUploadResult(null);
                 }}
                 disabled={uploading}
                 className="w-full px-4 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium disabled:opacity-50 transition-colors"

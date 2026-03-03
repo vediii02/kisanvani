@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 from core.auth import get_current_user
 from db.session import get_db
 from db.models.company import Company
@@ -279,6 +279,18 @@ async def create_company_product(
     if not company:
         raise HTTPException(status_code=404, detail="Company not found.")
     
+    # Check for duplicate product by name
+    existing_product_result = await db.execute(
+        select(Product).where(
+            and_(
+                func.lower(Product.name) == product_data.name.lower().strip(),
+                Product.company_id == company_id
+            )
+        )
+    )
+    if existing_product_result.scalars().first():
+        raise HTTPException(status_code=400, detail="A product with this name already exists for your company.")
+    
     # Create new product
     new_product = Product(
         name=product_data.name,
@@ -505,9 +517,24 @@ async def bulk_upload_products(
                     brand_id = new_brand.id
                     brand_name_to_id[brand_name] = brand_id
             
+            product_name = str(row['name']).strip()
+            
+            # Check for duplicate product
+            existing_product = await db.execute(
+                select(Product).where(
+                    and_(
+                        func.lower(Product.name) == product_name.lower(),
+                        Product.company_id == target_company_id
+                    )
+                )
+            )
+            if existing_product.scalars().first():
+                errors.append(f"Row {index + 1}: Product '{product_name}' already exists.")
+                continue
+
             # Create product
             product_data = {
-                'name': str(row['name']).strip(),
+                'name': product_name,
                 'category': str(row['category']).strip(),
                 'sub_category': str(row.get('sub_category', '')).strip() if pd.notna(row.get('sub_category')) else None,
                 'description': str(row.get('description', '')).strip() if pd.notna(row.get('description')) else None,

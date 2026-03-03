@@ -14,6 +14,8 @@ from core.auth import get_current_user, get_password_hash
 from db.session import get_db
 from db.models.company import Company
 from db.models.organisation import Organisation
+from db.models.brand import Brand
+from db.models.product import Product
 from db.models.user import User
 
 router = APIRouter()
@@ -85,6 +87,17 @@ async def get_companies(
             )
             org = org_result.scalar_one_or_none()
             
+            # Get brand and product counts
+            brand_count_result = await db.execute(
+                select(func.count(Brand.id)).where(Brand.company_id == company.id)
+            )
+            brand_count = brand_count_result.scalar() or 0
+            
+            product_count_result = await db.execute(
+                select(func.count(Product.id)).where(Product.company_id == company.id)
+            )
+            product_count = product_count_result.scalar() or 0
+            
             companies_data.append({
                 "id": company.id,
                 "name": company.name,
@@ -99,6 +112,8 @@ async def get_companies(
                 "website_link": company.website_link,
                 "description": company.description,
                 "contact_person": company.contact_person,
+                "brand_count": brand_count,
+                "product_count": product_count,
                 "status": company.status,
                 "created_at": company.created_at.isoformat() if company.created_at else None,
             })

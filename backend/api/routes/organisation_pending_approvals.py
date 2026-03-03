@@ -146,7 +146,7 @@ async def reject_user(
     current_user: dict = Depends(verify_organisation_role),
     db: AsyncSession = Depends(get_db)
 ):
-    """Reject a pending company user registration"""
+    """Reject a pending company user registration (soft-reject)"""
     
     # Get current user's organisation
     user_result = await db.execute(
@@ -175,23 +175,25 @@ async def reject_user(
     if user.organisation_id != current_db_user.organisation_id:
         raise HTTPException(status_code=403, detail="You can only reject users from your organisation")
     
-    # Store details for response
-    username = user.username
-    company_name = user.company.name if user.company else "Unknown"
+    # Soft-reject: mark as rejected instead of deleting
+    user.is_active = False
     
-    # Delete the user and associated company
     if user.company:
-        await db.delete(user.company)
+        user.company.status = "rejected"
+        user.company.updated_at = datetime.now(timezone.utc)
     
-    await db.delete(user)
     await db.commit()
     
     return {
-        "message": f"User {username} and company {company_name} rejected and deleted successfully",
+        "message": f"User {user.username} and company {user.company.name if user.company else 'Unknown'} rejected successfully",
         "user_id": user_id,
-        "username": username,
-        "company_name": company_name
+        "username": user.username,
+        "company_name": user.company.name if user.company else None
     }
+
+# ============================================================================
+# GET: Approval Statistics
+# ============================================================================
 
 # ============================================================================
 # GET: Approval Statistics
@@ -238,10 +240,23 @@ async def get_approval_stats(
     )
     approved_count = len(approved_result.scalars().all())
     
-    # Today's registrations
+    # Count rejected companies in this organisation
+    rejected_result = await db.execute(
+        select(Company).where(
+            and_(
+                Company.organisation_id == current_db_user.organisation_id,
+                Company.status == "rejected"
+            )
+        )
+    )
+    rejected_count = len(rejected_result.scalars().all())
+    
+    # Today's registrations (only count users with valid company)
     today = datetime.now(timezone.utc).date()
-    today_result = await db.execute(
-        select(User).where(
+    today_reg_result = await db.execute(
+        select(User)
+        .join(Company, User.company_id == Company.id)
+        .where(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
@@ -249,11 +264,136 @@ async def get_approval_stats(
             )
         )
     )
-    today_count = len(today_result.scalars().all())
+    today_reg_count = len(today_reg_result.scalars().all())
+    
+    # Today's rejections
+    today_rej_result = await db.execute(
+        select(Company).where(
+            and_(
+                Company.organisation_id == current_db_user.organisation_id,
+                Company.status == "rejected",
+                Company.updated_at >= today
+            )
+        )
+    )
+    today_rej_count = len(today_rej_result.scalars().all())
     
     return {
         "pending_count": pending_count,
         "approved_count": approved_count,
-        "today_registrations": today_count,
-        "total_company_users": pending_count + approved_count
+        "rejected_count": rejected_count,
+        "today_registrations": today_reg_count,
+        "today_rejections": today_rej_count,
+        "total_company_users": pending_count + approved_count + rejected_count
     }
+
+# ============================================================================
+# GET: Today's New Registrations (Organisation Level)
+# ============================================================================
+
+@router.get("/today-registrations")
+async def get_today_registrations(
+    current_user: dict = Depends(verify_organisation_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get today's new company user registrations for this organisation"""
+    
+    # Get current user's organisation
+    user_result = await db.execute(
+        select(User).where(User.username == current_user["username"])
+    )
+    current_db_user = user_result.scalar_one_or_none()
+    
+    if not current_db_user or not current_db_user.organisation_id:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+        
+    today = datetime.now(timezone.utc).date()
+    
+    result = await db.execute(
+        select(User, Company)
+        .join(Company, User.company_id == Company.id)
+        .where(
+            and_(
+                User.role == "company",
+                User.organisation_id == current_db_user.organisation_id,
+                User.created_at >= today
+            )
+        )
+        .order_by(User.created_at.desc())
+    )
+    
+    registrations = []
+    for user, company in result.all():
+        registrations.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "company_name": company.name,
+            "company_id": company.id,
+            "is_active": user.is_active,
+            "company_status": company.status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        })
+    
+    return {
+        "today_registrations": registrations,
+        "total": len(registrations)
+    }
+
+# ============================================================================
+# GET: Today's Rejected Users (Organisation Level)
+# ============================================================================
+
+@router.get("/today-rejections")
+async def get_today_rejections(
+    current_user: dict = Depends(verify_organisation_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get today's rejected company user registrations for this organisation"""
+    
+    # Get current user's organisation
+    user_result = await db.execute(
+        select(User).where(User.username == current_user["username"])
+    )
+    current_db_user = user_result.scalar_one_or_none()
+    
+    if not current_db_user or not current_db_user.organisation_id:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+        
+    today = datetime.now(timezone.utc).date()
+    
+    result = await db.execute(
+        select(User, Company)
+        .join(Company, User.company_id == Company.id)
+        .where(
+            and_(
+                User.role == "company",
+                User.organisation_id == current_db_user.organisation_id,
+                Company.status == "rejected",
+                Company.updated_at >= today
+            )
+        )
+        .order_by(Company.updated_at.desc())
+    )
+    
+    rejections = []
+    for user, company in result.all():
+        rejections.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "company_name": company.name,
+            "company_id": company.id,
+            "rejected_at": company.updated_at.isoformat() if company.updated_at else None,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        })
+    
+    return {
+        "today_rejections": rejections,
+        "total": len(rejections)
+    }
+

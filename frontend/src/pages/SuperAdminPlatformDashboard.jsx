@@ -87,7 +87,7 @@ const SuperAdminPlatformDashboard = () => {
     },
     {
       title: 'Companies',
-      value: kpis?.total_brands || 0,
+      value: kpis?.total_companies || 0,
       subtitle: `Across all orgs`,
       icon: Building2,
       color: 'bg-green-600',
@@ -102,6 +102,15 @@ const SuperAdminPlatformDashboard = () => {
       color: 'bg-green-600',
       gradient: 'from-green-500 to-emerald-700',
       action: () => navigate('/superadmin/brands')
+    },
+    {
+      title: 'Total Products',
+      value: kpis?.total_products || 0,
+      subtitle: 'Across all orgs',
+      icon: Package,
+      color: 'bg-pink-500',
+      gradient: 'from-pink-400 to-pink-600',
+      action: () => navigate('/superadmin/products')
     },
     {
       title: 'Active Phone Numbers',
@@ -139,15 +148,6 @@ const SuperAdminPlatformDashboard = () => {
       color: 'bg-yellow-500',
       gradient: 'from-yellow-400 to-yellow-600',
       action: () => navigate('/superadmin/escalations')
-    },
-    {
-      title: 'Total Users',
-      value: kpis?.total_users || 0,
-      subtitle: 'All Roles',
-      icon: Users,
-      color: 'bg-pink-500',
-      gradient: 'from-pink-400 to-pink-600',
-      action: () => navigate('/superadmin/users')
     },
     {
       title: 'KB Entries',

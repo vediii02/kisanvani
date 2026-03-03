@@ -14,6 +14,7 @@ from core.auth import get_current_super_admin
 from db.session import get_db
 from db.models.user import User
 from db.models.organisation import Organisation
+from db.models.company import Company
 from db.models.brand import Brand
 from db.models.product import Product
 from db.models.audit import AuditLog, PlatformConfig, BannedProduct
@@ -28,6 +29,7 @@ router = APIRouter()
 class DashboardKPIs(BaseModel):
     total_organisations: int
     active_organisations: int
+    total_companies: int
     total_brands: int
     total_products: int
     active_phone_numbers: int
@@ -186,6 +188,10 @@ async def get_dashboard_kpis(
     )
     active_orgs = active_org_result.scalar() or 0
     
+    # Total companies
+    company_result = await db.execute(select(func.count(Company.id)))
+    total_companies = company_result.scalar() or 0
+    
     # Total brands
     brand_result = await db.execute(select(func.count(Brand.id)))
     total_brands = brand_result.scalar() or 0
@@ -244,6 +250,7 @@ async def get_dashboard_kpis(
     return {
         "total_organisations": total_orgs,
         "active_organisations": active_orgs,
+        "total_companies": total_companies,
         "total_brands": total_brands,
         "total_products": total_products,
         "active_phone_numbers": active_phones,
@@ -305,12 +312,23 @@ async def get_dashboard_stats(
 
 class OrganisationCreate(BaseModel):
     name: str
+    email: Optional[str] = None
     phone_numbers: Optional[str] = None
-    secondary_phone: Optional[str] = None
+    address: Optional[str] = None
     description: Optional[str] = None
     website_url: Optional[str] = None
     auto_import_products: bool = False
+    username: Optional[str] = None
     admin_password: Optional[str] = None
+
+class OrganisationUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone_numbers: Optional[str] = None
+    address: Optional[str] = None
+    description: Optional[str] = None
+    website_url: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 @router.post("/organisations")
@@ -337,8 +355,11 @@ async def create_organisation(
     # Create organisation
     new_org = Organisation(
         name=org_data.name,
+        email=org_data.email,
         phone_numbers=org_data.phone_numbers,
-        secondary_phone=org_data.secondary_phone,
+        address=org_data.address,
+        description=org_data.description,
+        website_link=org_data.website_url,
         status='active'
     )
     
@@ -352,30 +373,31 @@ async def create_organisation(
     
     # Use provided password or generate random one
     default_password = org_data.admin_password if org_data.admin_password else secrets.token_urlsafe(12)
-    org_admin_username = new_org.name.lower().replace(' ', '_').replace('.', '')[:50] + '_admin'
-    
-    # Check if username already exists
-    existing_user_result = await db.execute(
-        select(User).where(User.username == org_admin_username)
-    )
-    existing_user = existing_user_result.scalar_one_or_none()
-    
+    # Create admin user only if password is provided
     admin_user = None
-    if not existing_user:
-        admin_user = User(
-            username=org_admin_username,
-            email=f"{org_admin_username}@{new_org.name.lower().replace(' ', '')}.com",
-            hashed_password=get_password_hash(default_password),
-            full_name=f"{new_org.name} Administrator",
-            role="organisation_admin",
-            organisation_id=new_org.id,
-            is_active=True
+    if org_data.admin_password:
+        org_admin_username = org_data.username if org_data.username else f"admin_{new_org.name.lower().replace(' ', '_')}"
+        
+        # Check if username already exists
+        existing_user_result = await db.execute(
+            select(User).where(User.username == org_admin_username)
         )
-        db.add(admin_user)
-        await db.commit()
-        await db.refresh(admin_user)
+        existing_user = existing_user_result.scalar_one_or_none()
+        
+        if not existing_user:
+            admin_user = User(
+                username=org_admin_username,
+                email=org_data.email if org_data.email else f"{org_admin_username}@{new_org.name.lower().replace(' ', '')}.com",
+                hashed_password=get_password_hash(org_data.admin_password),
+                full_name=f"{new_org.name} Administrator",
+                role="organisation",
+                organisation_id=new_org.id,
+                is_active=True
+            )
+            db.add(admin_user)
+            await db.commit()
     
-    # Auto-import products from website if URL provided
+    # Auto-import products if requested
     import_result = None
     if org_data.website_url and org_data.auto_import_products:
         try:
@@ -452,19 +474,16 @@ async def create_organisation(
     
     return {
         "success": True,
-        "message": f"Organisation '{new_org.name}' created successfully",
-        "organisation_id": new_org.id,
-        "admin_user": {
-            "username": admin_user.username if admin_user else None,
-            "password": default_password if admin_user else None,
-            "email": admin_user.email if admin_user else None
-        } if admin_user else None,
         "organisation": {
             "id": new_org.id,
             "name": new_org.name,
-            "status": new_org.status,
-            "created_at": new_org.created_at.isoformat() if new_org.created_at else None
+            "is_active": new_org.status == 'active'
         },
+        "admin_user": {
+            "username": admin_user.username,
+            "password": org_data.admin_password,  # Send back only if just created
+            "email": admin_user.email
+        } if admin_user else None,
         "import_result": import_result
     }
 
@@ -536,12 +555,13 @@ async def get_organisations_stats(
 @router.patch("/organisations/{org_id}/status")
 async def update_organisation_status(
     org_id: int,
-    is_active: bool,
     request: Request,
     current_user: dict = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Activate or suspend an organisation"""
+    body = await request.json()
+    is_active = body.get("is_active", True)
     
     # Get organisation
     result = await db.execute(select(Organisation).where(Organisation.id == org_id))
@@ -575,6 +595,101 @@ async def update_organisation_status(
     )
     
     return {"success": True, "message": f"Organisation {'activated' if is_active else 'suspended'}"}
+
+
+@router.put("/organisations/{org_id}")
+async def update_organisation(
+    org_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update organisation details"""
+    body = await request.json()
+
+    result = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = result.scalar_one_or_none()
+
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    old_name = org.name
+
+    if "name" in body and body["name"]:
+        org.name = body["name"].strip()
+    if "email" in body:
+        org.email = body["email"]
+    if "phone_numbers" in body:
+        org.phone_numbers = body["phone_numbers"]
+    if "address" in body:
+        org.address = body["address"]
+    if "description" in body:
+        org.description = body["description"]
+    if "website_url" in body:
+        org.website_link = body["website_url"]
+
+    await db.commit()
+    await db.refresh(org)
+
+    # Audit log
+    user_result = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = user_result.scalar_one_or_none()
+    if user:
+        await create_audit_log(
+            db=db,
+            user=user,
+            action_type="organisation_update",
+            action_category="organisation",
+            description=f"Updated organisation: {org.name}",
+            entity_type="organisation",
+            entity_id=org.id,
+            organisation_id=org.id,
+            new_value={"name": org.name},
+            severity="info",
+            request=request,
+        )
+
+    return {"success": True, "organisation": {"id": org.id, "name": org.name}}
+
+
+@router.delete("/organisations/{org_id}")
+async def delete_organisation(
+    org_id: int,
+    request: Request,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete an organisation"""
+    result = await db.execute(select(Organisation).where(Organisation.id == org_id))
+    org = result.scalar_one_or_none()
+
+    if not org:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+
+    org_name = org.name
+
+    # Audit log before deletion
+    user_result = await db.execute(select(User).where(User.username == current_user["username"]))
+    user = user_result.scalar_one_or_none()
+    if user:
+        await create_audit_log(
+            db=db,
+            user=user,
+            action_type="organisation_delete",
+            action_category="organisation",
+            description=f"Deleted organisation: {org_name}",
+            entity_type="organisation",
+            entity_id=org.id,
+            organisation_id=org.id,
+            old_value={"name": org_name},
+            severity="warning",
+            request=request,
+        )
+
+    await db.delete(org)
+    await db.commit()
+
+    return {"success": True, "message": f"Organisation '{org_name}' deleted successfully"}
 
 
 # ===== Platform Configuration =====

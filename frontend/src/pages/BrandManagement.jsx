@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Package } from 'lucide-react';
+import { Plus, Pencil, Trash2, Package, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +16,7 @@ export default function BrandManagement() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingBrand, setEditingBrand] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     company_id: '',
@@ -85,12 +86,12 @@ export default function BrandManagement() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
+
     if (!formData.name.trim()) {
       toast.error('Brand name is required');
       return;
     }
-    
+
     if (!formData.company_id) {
       toast.error('Please select a company');
       return;
@@ -119,7 +120,7 @@ export default function BrandManagement() {
         await brandAPI.create(payload);
         toast.success('Brand created successfully');
       }
-      
+
       handleCloseDialog();
       fetchBrands();
     } catch (error) {
@@ -127,7 +128,7 @@ export default function BrandManagement() {
       // Handle validation errors (Pydantic returns array of error objects)
       const errorDetail = error.response?.data?.detail;
       let errorMessage = 'Failed to save brand';
-      
+
       if (Array.isArray(errorDetail)) {
         // Pydantic validation errors
         errorMessage = errorDetail.map(err => {
@@ -139,7 +140,7 @@ export default function BrandManagement() {
       } else if (typeof errorDetail === 'string') {
         errorMessage = errorDetail;
       }
-      
+
       toast.error(errorMessage);
     }
   };
@@ -163,6 +164,12 @@ export default function BrandManagement() {
     const company = companies.find(c => c.id === companyId);
     return company?.name || 'No company assigned';
   };
+
+  const filteredBrands = brands.filter(brand =>
+    brand.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    brand.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    getCompanyName(brand.company_id).toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   if (loading) {
     return (
@@ -195,8 +202,8 @@ export default function BrandManagement() {
                   {editingBrand ? 'Edit Brand' : 'Create New Brand'}
                 </DialogTitle>
                 <DialogDescription>
-                  {editingBrand 
-                    ? 'Update the brand information below.' 
+                  {editingBrand
+                    ? 'Update the brand information below.'
                     : 'Add a new brand to a company.'}
                 </DialogDescription>
               </DialogHeader>
@@ -265,19 +272,33 @@ export default function BrandManagement() {
         </Dialog>
       </div>
 
+      <div className="mb-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search brands by name, description, or company..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {brands.length === 0 ? (
+        {filteredBrands.length === 0 ? (
           <Card className="col-span-full">
             <CardContent className="flex flex-col items-center justify-center py-12">
               <Package className="w-12 h-12 text-muted-foreground mb-4" />
-              <p className="text-lg font-medium">No brands found</p>
+              <p className="text-lg font-medium">
+                {searchQuery ? 'No brands found' : 'No brands available'}
+              </p>
               <p className="text-sm text-muted-foreground mt-1">
-                Create your first brand to get started
+                {searchQuery ? 'Try adjusting your search' : 'Create your first brand to get started'}
               </p>
             </CardContent>
           </Card>
         ) : (
-          brands.map((brand) => (
+          filteredBrands.map((brand) => (
             <Card key={brand.id} className="hover:shadow-lg transition-shadow">
               <CardHeader>
                 <div className="flex items-start justify-between">

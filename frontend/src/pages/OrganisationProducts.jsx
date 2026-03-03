@@ -8,6 +8,7 @@ const OrganisationProducts = () => {
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [brands, setBrands] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -19,9 +20,11 @@ const OrganisationProducts = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
   const [brandName, setBrandName] = useState('');
+  const [uploadCompanyId, setUploadCompanyId] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [formData, setFormData] = useState({
+    company_id: '',
     brand_id: '',
     name: '',
     category: '',
@@ -43,12 +46,14 @@ const OrganisationProducts = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [productsRes, brandsRes] = await Promise.all([
+      const [productsRes, brandsRes, companiesRes] = await Promise.all([
         api.get('/products'),
-        api.get('/brands')
+        api.get('/brands'),
+        api.get('/organisation/companies')
       ]);
       setProducts(productsRes.data);
       setBrands(brandsRes.data);
+      setCompanies(companiesRes.data.companies || []);
     } catch (err) {
       setError(err.response?.data?.detail || 'Failed to load data');
     } finally {
@@ -79,6 +84,11 @@ const OrganisationProducts = () => {
   };
 
   const handleUploadProducts = async () => {
+    if (!uploadCompanyId) {
+      alert('Please select a company');
+      return;
+    }
+
     if (!uploadFile) {
       alert('Please select a file');
       return;
@@ -90,6 +100,7 @@ const OrganisationProducts = () => {
     try {
       const formData = new FormData();
       formData.append('file', uploadFile);
+      formData.append('company_id', uploadCompanyId);
       if (brandName.trim()) {
         formData.append('brand_name', brandName.trim());
       }
@@ -109,9 +120,10 @@ const OrganisationProducts = () => {
       alert(response.data.message);
 
       // Reset form if successful
-      if (response.data.results.imported > 0) {
+      if (response.data.success_count > 0) {
         setUploadFile(null);
         setBrandName('');
+        setUploadCompanyId('');
         setShowUploadModal(false);
       }
     } catch (err) {
@@ -147,7 +159,8 @@ const OrganisationProducts = () => {
     try {
       const submitData = {
         ...formData,
-        brand_id: parseInt(formData.brand_id),
+        company_id: parseInt(formData.company_id),
+        brand_id: formData.brand_id ? parseInt(formData.brand_id) : null,
         organisation_id: 1 // Will be set by backend from JWT
       };
 
@@ -168,6 +181,7 @@ const OrganisationProducts = () => {
 
   const resetForm = () => {
     setFormData({
+      company_id: '',
       brand_id: '',
       name: '',
       category: '',
@@ -186,6 +200,7 @@ const OrganisationProducts = () => {
   const handleEdit = (product) => {
     setEditingProduct(product);
     setFormData({
+      company_id: product.company_id?.toString() || '',
       brand_id: product.brand_id?.toString() || '',
       name: product.name,
       category: product.category || '',
@@ -423,6 +438,21 @@ const OrganisationProducts = () => {
             <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
               <div className="grid grid-cols-2 gap-4">
                 <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Company *</label>
+                  <select
+                    value={formData.company_id}
+                    onChange={(e) => setFormData({ ...formData, company_id: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                    required
+                  >
+                    <option value="" disabled>Select Company *</option>
+                    {companies.map(company => (
+                      <option key={company.id} value={company.id}>{company.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Brand *</label>
                   <select
                     value={formData.brand_id}
@@ -430,23 +460,25 @@ const OrganisationProducts = () => {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                     required
                   >
-                    <option value="">Select Brand</option>
-                    {brands.map(brand => (
-                      <option key={brand.id} value={brand.id}>{brand.name}</option>
-                    ))}
+                    <option value="">Select Brand </option>
+                    {brands
+                      .filter(b => !formData.company_id || b.company_id === parseInt(formData.company_id))
+                      .map(brand => (
+                        <option key={brand.id} value={brand.id}>{brand.name}</option>
+                      ))}
                   </select>
                 </div>
+              </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Product Name *</label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                    required
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Product Name *</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  required
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -605,6 +637,7 @@ const OrganisationProducts = () => {
                     setShowUploadModal(false);
                     setUploadFile(null);
                     setBrandName('');
+                    setUploadCompanyId('');
                     setUploadResult(null);
                   }}
                   className="text-gray-400 hover:text-gray-600"
@@ -640,6 +673,30 @@ const OrganisationProducts = () => {
                     Excel Template
                   </button>
                 </div>
+              </div>
+
+              {/* Select Company */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Company *
+                </label>
+                <select
+                  value={uploadCompanyId}
+                  onChange={(e) => setUploadCompanyId(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  disabled={uploading}
+                  required
+                >
+                  <option value="" disabled>Select Company to upload products for</option>
+                  {companies.map((company) => (
+                    <option key={company.id} value={company.id}>
+                      {company.name}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">
+                  All uploaded products will be associated with this company
+                </p>
               </div>
 
               {/* Default Brand Name */}
@@ -710,32 +767,21 @@ const OrganisationProducts = () => {
 
               {/* Upload Result */}
               {uploadResult && (
-                <div className={`p-4 rounded-lg ${uploadResult.results.imported > 0 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
+                <div className={`p-4 rounded-lg ${uploadResult.success_count > 0 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'
                   }`}>
                   <h3 className="font-semibold text-gray-900 mb-2">Upload Results:</h3>
                   <div className="space-y-1 text-sm">
-                    <p className="text-green-700">✅ Imported: {uploadResult.results.imported} products</p>
-                    <p className="text-gray-700">⏭️ Skipped: {uploadResult.results.skipped} (already exist)</p>
-                    <p className="text-red-700">❌ Failed: {uploadResult.results.failed}</p>
-                    {uploadResult.results.created_brands.length > 0 && (
-                      <p className="text-blue-700">
-                        🏷️ Brands: {uploadResult.results.created_brands.join(', ')}
-                      </p>
-                    )}
+                    <p className="text-green-700">✅ Imported: {uploadResult.success_count} products</p>
+                    <p className="text-red-700">❌ Failed: {uploadResult.error_count}</p>
                   </div>
-                  {uploadResult.results.errors.length > 0 && (
+                  {uploadResult.errors && uploadResult.errors.length > 0 && (
                     <div className="mt-3 max-h-32 overflow-y-auto">
                       <p className="text-xs font-semibold text-red-800 mb-1">Errors:</p>
-                      {uploadResult.results.errors.slice(0, 5).map((err, idx) => (
+                      {uploadResult.errors.map((err, idx) => (
                         <p key={idx} className="text-xs text-red-700">
-                          Row {err.row}: {err.error}
+                          {err}
                         </p>
                       ))}
-                      {uploadResult.results.errors.length > 5 && (
-                        <p className="text-xs text-red-600 mt-1">
-                          ... and {uploadResult.results.errors.length - 5} more errors
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
@@ -762,6 +808,7 @@ const OrganisationProducts = () => {
                     setShowUploadModal(false);
                     setUploadFile(null);
                     setBrandName('');
+                    setUploadCompanyId('');
                     setUploadResult(null);
                   }}
                   disabled={uploading}

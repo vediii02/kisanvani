@@ -21,13 +21,16 @@ export default function ProtectedRoute({ children, requiredRole }) {
   // Check role-based access
   if (requiredRole) {
     const allowedRoles = Array.isArray(requiredRole) ? requiredRole : [requiredRole];
-    
+
+    // Map organisation_admin to organisation for access checks
+    const effectiveRole = user?.role === 'organisation_admin' ? 'organisation' : user?.role;
+
     // Allow admin to access superadmin routes
     if (allowedRoles.includes('superadmin') && user?.role === 'admin') {
       return children;
     }
-    
-    if (!allowedRoles.includes(user?.role)) {
+
+    if (!allowedRoles.includes(effectiveRole)) {
       return (
         <div className="flex items-center justify-center h-screen">
           <div className="text-center">

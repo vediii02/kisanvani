@@ -86,9 +86,11 @@ class PhoneNumberResponse(BaseModel):
 
 class BrandCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
+    organisation_id: Optional[int] = None
     company_id: Optional[int] = None
     description: Optional[str] = None
     logo_url: Optional[str] = None
+    is_active: bool = True
 
 class BrandResponse(BaseModel):
     id: int
@@ -102,7 +104,8 @@ class BrandResponse(BaseModel):
 
 class ProductCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=200)
-    brand_id: int
+    company_id: int
+    brand_id: Optional[int] = None
     category: Optional[str] = "other"
     sub_category: Optional[str] = None
     description: Optional[str] = None
@@ -116,6 +119,7 @@ class ProductCreate(BaseModel):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
+    company_id: Optional[int] = None
     brand_id: Optional[int] = None
     category: Optional[str] = None
     sub_category: Optional[str] = None
@@ -639,12 +643,7 @@ async def lookup_organisation_by_phone(
 
 # ==================== Brand Management ====================
 
-class BrandCreate(BaseModel):
-    name: str = Field(..., min_length=2, max_length=200)
-    organisation_id: int
-    company_id: Optional[int] = None
-    description: Optional[str] = None
-    is_active: bool = True
+# (Duplicate BrandCreate removed)
 
 class BrandUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=200)
@@ -1086,19 +1085,47 @@ async def create_product(
     current_user = Depends(get_current_user)
 ):
     """Create a new product"""
-    # Verify brand exists and get its organisation_id and company_id
-    brand_result = await db.execute(
-        select(Brand).where(Brand.id == product.brand_id)
+    is_superadmin = current_user.get("role") in ["admin", "superadmin"]
+    org_id = current_user.get("organisation_id")
+
+    # Verify company exists
+    from db.models.company import Company
+    company_result = await db.execute(
+        select(Company).where(Company.id == product.company_id)
     )
-    brand = brand_result.scalar_one_or_none()
-    if not brand:
-        raise HTTPException(status_code=404, detail="Brand not found")
+    company = company_result.scalar_one_or_none()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
     
+    if not is_superadmin and company.organisation_id != org_id:
+        raise HTTPException(status_code=403, detail="Access denied to this company")
+
+    brand = None
+    if product.brand_id:
+        brand_result = await db.execute(
+            select(Brand).where(Brand.id == product.brand_id)
+        )
+        brand = brand_result.scalar_one_or_none()
+        if not brand:
+            raise HTTPException(status_code=404, detail="Brand not found")
+
+    # Check for duplicate product by name in the same company
+    existing_product_result = await db.execute(
+        select(Product).where(
+            and_(
+                func.lower(Product.name) == product.name.lower().strip(),
+                Product.company_id == product.company_id
+            )
+        )
+    )
+    if existing_product_result.scalars().first():
+        raise HTTPException(status_code=400, detail="A product with this name already exists in this company")
+
     new_product = Product(
         name=product.name,
+        company_id=product.company_id,
+        organisation_id=company.organisation_id,
         brand_id=product.brand_id,
-        organisation_id=brand.organisation_id,
-        company_id=brand.company_id,
         description=product.description,
         category=product.category or "other",
         sub_category=product.sub_category,
@@ -1116,11 +1143,7 @@ async def create_product(
     await db.refresh(new_product)
     
     brand_name = brand.name if brand else None
-    company_name = None
-    if brand.company_id:
-        from db.models.company import Company
-        co_res = await db.execute(select(Company.name).where(Company.id == brand.company_id))
-        company_name = co_res.scalar()
+    company_name = company.name
 
     return {
         "id": new_product.id,
@@ -1164,6 +1187,14 @@ async def update_product(
     
     if product_update.name is not None:
         product.name = product_update.name
+    if product_update.company_id is not None:
+        from db.models.company import Company
+        co_res = await db.execute(select(Company).where(Company.id == product_update.company_id))
+        company = co_res.scalar_one_or_none()
+        if not company or (not is_superadmin and company.organisation_id != org_id):
+            raise HTTPException(status_code=400, detail="Invalid company for this organisation")
+        product.company_id = product_update.company_id
+        product.organisation_id = company.organisation_id
     if product_update.brand_id is not None:
         # Verify brand exists and belongs to same org
         brand_res = await db.execute(select(Brand).where(Brand.id == product_update.brand_id))
@@ -1171,7 +1202,6 @@ async def update_product(
         if not brand or brand.organisation_id != product.organisation_id:
             raise HTTPException(status_code=400, detail="Invalid brand for this organisation")
         product.brand_id = product_update.brand_id
-        product.company_id = brand.company_id
     if product_update.category is not None:
         product.category = product_update.category
     if product_update.sub_category is not None:
@@ -1381,6 +1411,7 @@ async def get_product_import_template(
 @product_router.post("/upload-csv")
 async def upload_products_csv(
     file: UploadFile = File(...),
+    company_id: int = Form(...),
     brand_id: Optional[int] = Form(None),
     brand_name: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
@@ -1388,16 +1419,25 @@ async def upload_products_csv(
 ):
     """
     Upload products via CSV or Excel file
-    Supports providing brand_id OR brand_name (default for all rows) 
+    Supports providing company_id, brand_id OR brand_name (default for all rows) 
     OR per-row brand_name in the file.
     """
     is_superadmin = current_user.get("role") in ["admin", "superadmin"]
     user_org_id = current_user.get("organisation_id")
     
-    logger.info(f"🔍 Product CSV Upload - File: {file.filename}, Brand ID: {brand_id}, Brand Name: {brand_name}")
+    logger.info(f"🔍 Product CSV Upload - File: {file.filename}, Company ID: {company_id}, Brand ID: {brand_id}, Brand Name: {brand_name}")
     
     if not file.filename.endswith(('.csv', '.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Invalid file format. Please upload CSV or Excel file.")
+    
+    # Verify company
+    from db.models.company import Company
+    company_result = await db.execute(select(Company).where(Company.id == company_id))
+    target_company = company_result.scalar_one_or_none()
+    if not target_company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    if not is_superadmin and target_company.organisation_id != user_org_id:
+        raise HTTPException(status_code=403, detail="Access denied to this company")
     
     # Initial brand check if brand_id is provided
     default_brand = None
@@ -1411,25 +1451,25 @@ async def upload_products_csv(
             raise HTTPException(status_code=403, detail="Access denied to this brand")
     
     # helper to get or create brand
-    async def get_or_create_brand(name_to_use, org_id):
+    async def get_or_create_brand(name_to_use, org_id, co_id):
         if not name_to_use or not org_id: return None
         # Check existing
         brand_res = await db.execute(
-            select(Brand).where(and_(Brand.name == name_to_use, Brand.organisation_id == org_id))
+            select(Brand).where(and_(Brand.name == name_to_use, Brand.organisation_id == org_id, Brand.company_id == co_id))
         )
-        existing_brand = brand_res.scalar_one_or_none()
+        existing_brand = brand_res.scalars().first()
         if existing_brand:
             return existing_brand
         
         # Create new
-        new_b = Brand(name=name_to_use, organisation_id=org_id, is_active=True)
+        new_b = Brand(name=name_to_use, organisation_id=org_id, company_id=co_id, is_active=True)
         db.add(new_b)
         await db.flush() # Get ID without committing
         return new_b
 
     # Determine default brand from name if provided and ID is not
     if not default_brand and brand_name and user_org_id:
-        default_brand = await get_or_create_brand(brand_name, user_org_id)
+        default_brand = await get_or_create_brand(brand_name, user_org_id, company_id)
 
     success_count = 0
     errors = []
@@ -1475,18 +1515,18 @@ async def upload_products_csv(
                     if row_brand_name in brand_cache:
                         current_row_brand = brand_cache[row_brand_name]
                     else:
-                        current_row_brand = await get_or_create_brand(row_brand_name, user_org_id)
+                        current_row_brand = await get_or_create_brand(row_brand_name, user_org_id, company_id)
                         brand_cache[row_brand_name] = current_row_brand
 
                 if not current_row_brand:
                     # Fallback to organisation level if no brand info
                     target_org_id = user_org_id
                     target_brand_id = None
-                    target_company_id = None
+                    target_company_id = company_id
                 else:
                     target_org_id = current_row_brand.organisation_id
                     target_brand_id = current_row_brand.id
-                    target_company_id = current_row_brand.company_id
+                    target_company_id = company_id
 
                 if not target_org_id:
                     error_msg = f"Row {idx}: Missing organisation context"
@@ -1496,11 +1536,28 @@ async def upload_products_csv(
 
                 logger.info(f"✅ Row {idx}: Creating product '{row.get('name')}' for brand {target_brand_id}")
                 
+                product_name = str(row.get('name', '')).strip()
+                
+                # Check for duplicate product
+                existing_product = await db.execute(
+                    select(Product).where(
+                        and_(
+                            func.lower(Product.name) == product_name.lower(),
+                            Product.company_id == target_company_id
+                        )
+                    )
+                )
+                if existing_product.scalars().first():
+                    error_msg = f"Row {idx}: Product '{product_name}' already exists in this company"
+                    logger.warning(f"⏭️ {error_msg}")
+                    errors.append(error_msg)
+                    continue
+                
                 product = Product(
                     organisation_id=target_org_id,
                     company_id=target_company_id,
                     brand_id=target_brand_id,
-                    name=str(row.get('name', '')).strip(),
+                    name=product_name,
                     category=str(row.get('category', 'other')).strip(),
                     sub_category=str(row.get('sub_category', '')).strip() if row.get('sub_category') else None,
                     description=str(row.get('description', '')).strip() if row.get('description') else None,

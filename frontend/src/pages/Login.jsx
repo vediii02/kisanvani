@@ -36,6 +36,7 @@ export default function Login() {
           navigate('/company/dashboard');
           break;
         case 'organisation':
+        case 'organisation_admin':
           navigate('/organisation/dashboard');
           break;
         case 'admin':

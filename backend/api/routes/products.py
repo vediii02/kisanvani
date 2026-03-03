@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func, and_
 from typing import List, Optional
 from db.session import get_db
 from db.models.product import Product
@@ -121,6 +121,18 @@ async def create_product(
     brand = result.scalar_one_or_none()
     if not brand:
         raise HTTPException(status_code=404, detail="Brand not found")
+
+    # Check for duplicate product
+    existing_product_result = await db.execute(
+        select(Product).where(
+            and_(
+                func.lower(Product.name) == product.name.lower().strip(),
+                Product.company_id == product.company_id
+            )
+        )
+    )
+    if existing_product_result.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="A product with this name already exists in this company")
     
     new_product = Product(**product.dict())
     db.add(new_product)

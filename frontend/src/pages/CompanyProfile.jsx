@@ -435,6 +435,7 @@ export default function CompanyProfile() {
               <Input
                 id="gst_number"
                 value={companyData.gst_number}
+                onChange={(e) => handleInputChange('gst_number', e.target.value)}
                 disabled={!editing}
                 className="mt-1 bg-muted"
                 placeholder="27AAAPL1234C1ZV"
@@ -446,6 +447,7 @@ export default function CompanyProfile() {
               <Input
                 id="registration_number"
                 value={companyData.registration_number}
+                onChange={(e) => handleInputChange('registration_number', e.target.value)}
                 disabled={!editing}
                 className="mt-1 bg-muted"
                 placeholder="ROC-123456"

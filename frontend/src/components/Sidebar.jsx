@@ -117,7 +117,7 @@ export default function Sidebar() {
           </>
         )}
 
-        {user?.role === 'organisation' && (
+        {(user?.role === 'organisation' || user?.role === 'organisation_admin') && (
           <>
             <div className="my-4 px-4">
               <div className="h-px bg-primary-foreground/20"></div>
