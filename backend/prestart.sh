@@ -2,8 +2,11 @@
 
 # Let migrations run directly (depends_on healthcheck handles DB readiness)
 
+# Wait for Postgres
+echo "Waiting for PostgreSQL to start..."
+sleep 15
+
 # Run migrations
-echo "Running Alembic migrations..."
 alembic upgrade head
 
 # Start Uvicorn

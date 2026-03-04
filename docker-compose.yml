@@ -85,7 +85,7 @@ services:
 
     # 👇 IMPORTANT FIX — migrate DB then run uvicorn
     command: >
-      sh -c "/app/prestart.sh"
+      bash /app/prestart.sh
 
   frontend:
     build:

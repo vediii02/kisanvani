@@ -21,4 +21,5 @@ COPY . .
 
 EXPOSE 8001
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8001"]
+RUN chmod +x /app/prestart.sh
+CMD ["bash", "/app/prestart.sh"]
