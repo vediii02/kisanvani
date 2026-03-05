@@ -294,8 +294,8 @@ export default function OrganisationCompanies() {
                       )}
                     </div>
                     <div className={`px-3 py-1 rounded-full text-xs font-medium ${company.status === 'active'
-                        ? 'bg-green-100 text-green-700'
-                        : 'bg-gray-100 text-gray-700'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-gray-100 text-gray-700'
                       }`}>
                       {company.status || 'active'}
                     </div>
@@ -639,7 +639,7 @@ export default function OrganisationCompanies() {
               />
             </div>
 
-            {/* <div>
+            <div>
               <Label htmlFor="edit_address">Address</Label>
               <Input
                 id="edit_address"
@@ -686,7 +686,7 @@ export default function OrganisationCompanies() {
                   onChange={(e) => setFormData({ ...formData, max_products: parseInt(e.target.value) || 100 })}
                 />
               </div>
-            </div> */}
+            </div>
 
             <div>
               <Label htmlFor="edit_status">Status</Label>

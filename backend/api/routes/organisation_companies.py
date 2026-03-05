@@ -295,7 +295,7 @@ async def create_company(
             address=company_data.address,
             gst_number=company_data.gst_number,
             registration_number=company_data.registration_number,
-            status=company_data.status,
+            status="pending" if (company_data.username and company_data.password) else company_data.status,
             max_operators=company_data.max_operators,
             max_products=company_data.max_products,
             notes=company_data.notes
@@ -316,7 +316,8 @@ async def create_company(
                 role="company",
                 organisation_id=org_id,
                 company_id=new_company.id,
-                is_active=True,
+                is_active=False,
+                status="pending",
                 created_at=datetime.now(timezone.utc)
             )
             

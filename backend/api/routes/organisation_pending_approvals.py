@@ -64,7 +64,7 @@ async def get_pending_approvals(
     
     approvals = []
     for user in pending_users:
-        if user.company and user.company.status == "active":
+        if user.company and user.company.status in ["active", "pending"]:
             approvals.append({
                 "id": user.id,
                 "username": user.username,
@@ -126,6 +126,10 @@ async def approve_user(
     
     # Approve the user
     user.status = "active"
+    
+    if user.company:
+        user.company.status = "active"
+        user.company.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
     
@@ -260,7 +264,7 @@ async def get_approval_stats(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
-                Company.status == "active",
+                Company.status.in_(["active", "pending"]),
                 User.created_at >= today
             )
         )
@@ -317,7 +321,7 @@ async def get_today_registrations(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
-                Company.status == "active",
+                Company.status.in_(["active", "pending"]),
                 User.created_at >= today
             )
         )
