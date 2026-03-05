@@ -234,34 +234,52 @@ async def exotel_ws_endpoint(websocket: WebSocket):
                         except Exception as e:
                             logger.warning(f"Could not parse custom_parameters: {e}")
                             
-                        if not company_id and adapter.to_number:
+                        if not company_id: # Only try to find company if not already set by custom_parameters
                             try:
                                 from db.base import AsyncSessionLocal
                                 from db.models.company import Company
                                 from sqlalchemy import select, or_
                                 async with AsyncSessionLocal() as db:
-                                    phone_suffix = adapter.to_number[-10:] if len(adapter.to_number) >= 10 else adapter.to_number
-                                    stmt = select(Company.id, Company.organisation_id).where(
-                                        or_(
-                                            Company.phone.like(f"%{phone_suffix}"),
-                                            Company.secondary_phone.like(f"%{phone_suffix}")
+                                    found = False
+                                    
+                                    # Strategy 1: Look up company by the 'to' number (works if each company has unique ExoPhone)
+                                    if adapter.to_number:
+                                        phone_suffix = adapter.to_number[-10:] if len(adapter.to_number) >= 10 else adapter.to_number
+                                        stmt = select(Company.id, Company.organisation_id).where(
+                                            or_(
+                                                Company.phone.like(f"%{phone_suffix}"),
+                                                Company.secondary_phone.like(f"%{phone_suffix}")
+                                            )
                                         )
-                                    )
-                                    result = await db.execute(stmt)
-                                    company_row = result.first()
-                                    if company_row:
-                                        db_company_id, db_org_id = company_row
-                                        
-                                        company_id = db_company_id
-                                        reset_current_company_id(company_ctx_token)
-                                        company_ctx_token = set_current_company_id(company_id)
-                                        
-                                        if not organisation_id:
-                                            organisation_id = db_org_id
-                                            reset_current_organisation_id(session_ctx_token)
-                                            session_ctx_token = set_current_organisation_id(organisation_id)
-                                            
-                                        logger.info(f"Context updated from Exotel To number lookup: org={organisation_id}, company={company_id}")
+                                        result = await db.execute(stmt)
+                                        company_row = result.first()
+                                        if company_row:
+                                            db_company_id, db_org_id = company_row
+                                            company_id = db_company_id
+                                            reset_current_company_id(company_ctx_token)
+                                            company_ctx_token = set_current_company_id(company_id)
+                                            if not organisation_id:
+                                                organisation_id = db_org_id
+                                                reset_current_organisation_id(session_ctx_token)
+                                                session_ctx_token = set_current_organisation_id(organisation_id)
+                                            found = True
+                                            logger.info(f"Context resolved from To number: org={organisation_id}, company={company_id}")
+                                    
+                                    # Strategy 3: Fallback to first company in DB (for testing / single-tenant)
+                                    if not found:
+                                        fallback_stmt = select(Company.id, Company.organisation_id).limit(1)
+                                        fallback_result = await db.execute(fallback_stmt)
+                                        fallback_row = fallback_result.first()
+                                        if fallback_row:
+                                            db_company_id, db_org_id = fallback_row
+                                            company_id = db_company_id
+                                            reset_current_company_id(company_ctx_token)
+                                            company_ctx_token = set_current_company_id(company_id)
+                                            if not organisation_id:
+                                                organisation_id = db_org_id
+                                                reset_current_organisation_id(session_ctx_token)
+                                                session_ctx_token = set_current_organisation_id(organisation_id)
+                                            logger.warning(f"FALLBACK: Using default company: org={organisation_id}, company={company_id}")
                             except Exception as e:
                                 logger.error(f"Error looking up company by phone: {e}")
                         continue

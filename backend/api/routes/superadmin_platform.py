@@ -222,9 +222,9 @@ async def get_dashboard_kpis(
     )
     calls_month = calls_month_result.scalar() or 0
     
-    # Live calls (status = 'active' or 'in_progress')
+    # Live calls (status = 'ACTIVE')
     live_calls_result = await db.execute(
-        text("SELECT COUNT(*) FROM call_sessions WHERE status IN ('active', 'in_progress')")
+        text("SELECT COUNT(*) FROM call_sessions WHERE status = 'ACTIVE'")
     )
     live_calls = live_calls_result.scalar() or 0
     

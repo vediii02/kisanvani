@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Request, Response, Depends
+from fastapi import APIRouter, Request, Depends
+from fastapi.responses import JSONResponse
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, or_
@@ -10,33 +11,46 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.post("/incoming")
+@router.get("/incoming")
 async def exotel_incoming(request: Request, db: AsyncSession = Depends(get_db)):
     """
-    Webhook endpoint hit by Exotel when a farmer calls the virtual number.
-    Returns the XML needed to connect the call to the our WebSocket streaming endpoint.
+    Voicebot applet endpoint hit by Exotel for each incoming call.
+    Returns JSON with the dynamic WSS URL containing company context.
+    Handles both POST (form data) and GET (query parameters) requests.
     """
-    form_data = await request.form()
+    if request.method == "POST":
+        form_data = await request.form()
+    else:
+        form_data = request.query_params
     
-    from_number = form_data.get('From', '')
-    to_number = form_data.get('To', '')
+    # Log ALL incoming parameters for debugging
+    all_params = {key: form_data.get(key) for key in form_data}
+    logger.info(f"=== EXOTEL VOICEBOT WEBHOOK === {all_params}")
     
-    logger.info(f"Incoming call from {from_number} to {to_number}")
+    from_number = form_data.get('From', '') or form_data.get('CallFrom', '')
+    to_number = form_data.get('To', '') or form_data.get('CallTo', '')
     
-    # Construct the WebSocket URL based on the Request headers
-    # Extract the host (e.g. 1234abcd.ngrok.app) and protocol
+    # Construct the WebSocket URL
     host = request.headers.get("host")
     scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    
-    # Map http/https to ws/wss
     ws_scheme = "wss" if scheme == "https" else "ws"
-    
     stream_url = f"{ws_scheme}://{host}/ws/exotel"
     
-    # Auto-detect company from the dialed To number
+    # Try to identify the company from available data
+    original_dialed_number = form_data.get('DialWhomNumber') or form_data.get('ForwardedFrom')
+    if original_dialed_number and original_dialed_number.strip() == '':
+        original_dialed_number = None
+    
+    lookup_number = original_dialed_number if original_dialed_number else to_number
+    
+    logger.info(f"Voicebot Webhook | From: {from_number} | To: {to_number} | OriginalDialed: {original_dialed_number} | Lookup: {lookup_number}")
+    
+    # Auto-detect company from the lookup number
     url_params = ""
-    if to_number:
+    company_found = False
+    if lookup_number:
         try:
-            phone_suffix = to_number[-10:] if len(to_number) >= 10 else to_number
+            phone_suffix = lookup_number[-10:] if len(lookup_number) >= 10 else lookup_number
             stmt = select(Company.id, Company.organisation_id).where(
                 or_(
                     Company.phone.like(f"%{phone_suffix}"),
@@ -48,21 +62,29 @@ async def exotel_incoming(request: Request, db: AsyncSession = Depends(get_db)):
             if company_row:
                 db_company_id, db_org_id = company_row
                 url_params = f"?org_id={db_org_id}&company_id={db_company_id}"
-                logger.info(f"Resolved To number {to_number} to org_id: {db_org_id}, company_id: {db_company_id}")
+                company_found = True
+                logger.info(f"Resolved number {lookup_number} → org_id: {db_org_id}, company_id: {db_company_id}")
             else:
-                logger.warning(f"No company found for To number {to_number}")
+                logger.warning(f"No company found for number {lookup_number}")
         except Exception as e:
             logger.error(f"Error looking up company by phone: {e}")
-            
+    
+    # Fallback: use first company in DB
+    if not company_found:
+        try:
+            fallback_stmt = select(Company.id, Company.organisation_id).limit(1)
+            fallback_result = await db.execute(fallback_stmt)
+            fallback_row = fallback_result.first()
+            if fallback_row:
+                db_company_id, db_org_id = fallback_row
+                url_params = f"?org_id={db_org_id}&company_id={db_company_id}"
+                logger.warning(f"FALLBACK: Using default company → org_id: {db_org_id}, company_id: {db_company_id}")
+        except Exception as e:
+            logger.error(f"Error in fallback company lookup: {e}")
+
     stream_url += url_params
     
-    # Generate the Exotel compatible NCCO (XML format for call flow)
-    xml_response = f"""<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Connect>
-        <Stream url="{stream_url}">
-        </Stream>
-    </Connect>
-</Response>"""
+    logger.info(f"Returning dynamic WSS URL: {stream_url}")
     
-    return Response(content=xml_response, media_type="application/xml")
+    # Return JSON with the WSS URL — this is what Exotel's Voicebot applet expects
+    return JSONResponse(content={"url": stream_url})
