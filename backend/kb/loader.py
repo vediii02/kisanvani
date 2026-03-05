@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 from db.base import AsyncSessionLocal
 from db.models.kb_entry import KBEntry
 from db.models.knowledge_base import KnowledgeEntry
+from db.models.product import Product
 
 logger = logging.getLogger(__name__)
 
@@ -89,5 +90,74 @@ class KBLoader:
 
         except Exception as e:
             logger.error(f"Error generating or saving embedding for kb_entry {kb_entry.id}: {e}")
+
+    async def load_product_to_vector_db(self, product: Product):
+        """Generates OpenAI embedding for a product and saves it to knowledge_entries table."""
+        if getattr(product, 'is_active', True) is False:
+            logger.warning(f"Skipping product {product.id} - not active")
+            return
+            
+        client = self._get_openai_client()
+        if not client:
+            return
+
+        try:
+            # Construct a comprehensive text representation
+            content_parts = [
+                f"Product Name: {product.name}",
+                f"Category: {product.category}",
+                f"Description: {getattr(product, 'description', '') or ''}",
+                f"Target Crops: {getattr(product, 'target_crops', '') or ''}",
+                f"Target Problems: {getattr(product, 'target_problems', '') or ''}",
+                f"Dosage: {getattr(product, 'dosage', '') or ''}",
+                f"Usage Instructions: {getattr(product, 'usage_instructions', '') or ''}"
+            ]
+            embed_text = "\n".join([p for p in content_parts if ": " in p and p.split(': ')[1].strip()])
+            
+            # Combine info for the 'content' field that the AI reads
+            summary_content = "\n".join(content_parts)
+
+            logger.info(f"Generating OpenAI embedding for Product {product.id} ({product.name})")
+            response = await client.embeddings.create(
+                input=embed_text,
+                model="text-embedding-3-small",
+            )
+            embedding_vector = response.data[0].embedding
+            source_id = f"product:{product.id}"
+
+            async with AsyncSessionLocal() as db:
+                # Find existing KnowledgeEntry if it exists
+                stmt = select(KnowledgeEntry).where(KnowledgeEntry.source == source_id)
+                result = await db.execute(stmt)
+                knowledge_entry = result.scalar_one_or_none()
+                
+                if knowledge_entry:
+                    # Update existing
+                    knowledge_entry.organisation_id = product.organisation_id
+                    knowledge_entry.company_id = product.company_id
+                    knowledge_entry.crop = getattr(product, 'target_crops', '')
+                    knowledge_entry.problem_type = getattr(product, 'target_problems', '')
+                    knowledge_entry.content = summary_content
+                    knowledge_entry.embedding = embedding_vector
+                    
+                    await db.commit()
+                    logger.info(f"Updated existing KnowledgeEntry for product {product.id}")
+                else:
+                    # Create new
+                    knowledge_entry = KnowledgeEntry(
+                        organisation_id=product.organisation_id,
+                        company_id=product.company_id,
+                        crop=getattr(product, 'target_crops', ''),
+                        problem_type=getattr(product, 'target_problems', ''),
+                        source=source_id,
+                        content=summary_content,
+                        embedding=embedding_vector
+                    )
+                    db.add(knowledge_entry)
+                    await db.commit()
+                    logger.info(f"Created new KnowledgeEntry with embedding for product {product.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating or saving embedding for product {product.id}: {e}")
 
 kb_loader = KBLoader()

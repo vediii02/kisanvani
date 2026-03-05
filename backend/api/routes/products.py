@@ -1,6 +1,6 @@
 # backend/api/routes/products.py
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import List, Optional
@@ -11,6 +11,7 @@ from db.models.organisation import Organisation
 from schemas.product import ProductResponse, ProductCreate, ProductUpdate
 from core.auth import get_current_user
 from db.models.user import User
+from kb.loader import kb_loader
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -109,6 +110,7 @@ async def get_products_by_organisation(
 @router.post("/", response_model=ProductResponse)
 async def create_product(
     product: ProductCreate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -139,6 +141,9 @@ async def create_product(
     await db.commit()
     await db.refresh(new_product)
     
+    # Automatically generate embedding in the background
+    background_tasks.add_task(kb_loader.load_product_to_vector_db, new_product)
+    
     return new_product
 
 
@@ -146,6 +151,7 @@ async def create_product(
 async def update_product(
     product_id: int,
     product_update: ProductUpdate,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -166,7 +172,11 @@ async def update_product(
     await db.commit()
     await db.refresh(product)
     
+    # Automatically update embedding in the background
+    background_tasks.add_task(kb_loader.load_product_to_vector_db, product)
+    
     return product
+
 
 
 @router.delete("/{product_id}")

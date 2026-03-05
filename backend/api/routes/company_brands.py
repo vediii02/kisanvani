@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from core.auth import get_current_user
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 import pandas as pd
 import io
+from kb.loader import kb_loader
 
 router = APIRouter()
 
@@ -439,6 +440,7 @@ async def delete_company_product(
 async def bulk_upload_products(
     file: UploadFile = File(...),
     company_id: Optional[str] = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -552,6 +554,14 @@ async def bulk_upload_products(
             
             new_product = Product(**product_data)
             db.add(new_product)
+            
+            # Since we need the ID for the embedding system, we should flush the session
+            # to get the ID without fully committing the entire transaction yet
+            await db.flush()
+            
+            # Add to background tasks for vectorization
+            background_tasks.add_task(kb_loader.load_product_to_vector_db, new_product)
+            
             imported_count += 1
             
         except Exception as e:
