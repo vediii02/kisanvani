@@ -12,6 +12,7 @@ from sqlalchemy import select
 from db.base import AsyncSessionLocal
 from db.models.knowledge_base import KnowledgeEntry
 from services.voice.session_context import get_current_organisation_id, get_current_company_id
+from services.config_service import get_platform_config
 
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -23,12 +24,43 @@ logger = setup_logger("llm")
 # ==========================================
 # 1. Initialize Components
 # ==========================================
-llm = ChatGroq(
-    model="llama-3.1-8b-instant",
-    temperature=0.3,
-    api_key=groq_api_key,
-)
+
+# LLM factory — picks provider based on PlatformConfig
+def _create_groq_llm():
+    return ChatGroq(
+        model="llama-3.1-8b-instant",
+        temperature=0.3,
+        api_key=groq_api_key,
+    )
+
+def _create_openai_llm():
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model="gpt-4o",
+        temperature=0.3,
+        api_key=openai_api_key,
+    )
+
+# Default LLM (used as fallback)
+llm = _create_groq_llm()
+
+async def get_llm():
+    """Get the LLM based on current PlatformConfig."""
+    try:
+        config = await get_platform_config()
+        provider = config.get("llm_model", "groq")
+        if provider == "openai":
+            logger.info("Using OpenAI (GPT-4o) as LLM provider")
+            return _create_openai_llm()
+        else:
+            logger.info("Using Groq (Llama 3.1) as LLM provider")
+            return _create_groq_llm()
+    except Exception as e:
+        logger.error(f"Failed to get LLM from config, using default Groq: {e}")
+        return _create_groq_llm()
+
 openai_client = AsyncOpenAI(api_key=openai_api_key)
+
 _agent_cache: dict[tuple[int | None, int | None], Any] = {}
 
 # Postgres-backed conversation memory
@@ -229,11 +261,19 @@ STRICT RULES:
 # 5. Agent Factory
 # ==========================================
 async def get_agent_executor(organisation_id: int | None = None, company_id: int | None = None):
-    cache_key = (organisation_id, company_id)
+    # Get current LLM provider from config for cache key
+    try:
+        config = await get_platform_config()
+        llm_provider = config.get("llm_model", "groq")
+    except Exception:
+        llm_provider = "groq"
+
+    cache_key = (organisation_id, company_id, llm_provider)
     if cache_key in _agent_cache:
         return _agent_cache[cache_key]
 
     await _ensure_checkpointer()
+    current_llm = await get_llm()
 
     if organisation_id is None:
         tools = [retrieve_context]
@@ -246,7 +286,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         tools = [retrieve_context_scoped]
 
     executor = create_react_agent(
-        model=llm,
+        model=current_llm,
         tools=tools,
         prompt=system_prompt,
         checkpointer=checkpointer,

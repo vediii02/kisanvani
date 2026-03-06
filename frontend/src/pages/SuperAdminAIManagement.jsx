@@ -10,13 +10,19 @@ export default function SuperAdminAIManagement() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [health, setHealth] = useState({
+    status: 'healthy',
+    system: 'operational',
+    services: { database: 'connected', redis: 'connected' },
+    active_alerts: 0
+  });
   const [formData, setFormData] = useState({
     ai_confidence_threshold: 70,
     max_call_duration_minutes: 15,
     default_language: 'hi',
-    stt_provider: 'google',
-    tts_provider: 'google',
-    llm_model: 'gpt-4',
+    stt_provider: 'sarvam',
+    tts_provider: 'sarvam',
+    llm_model: 'groq',
     rag_strictness_level: 'medium',
     rag_min_confidence: 60,
     force_kb_approval: true,
@@ -27,13 +33,37 @@ export default function SuperAdminAIManagement() {
 
   useEffect(() => {
     fetchConfig();
+    fetchHealth();
+    // Poll health every 30 seconds
+    const interval = setInterval(fetchHealth, 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchHealth = async () => {
+    try {
+      const response = await api.get('/health');
+      setHealth(response.data);
+    } catch (error) {
+      console.error('Error fetching health status:', error);
+    }
+  };
 
   const fetchConfig = async () => {
     try {
       const response = await api.get('/superadmin/platform/config');
-      setConfig(response.data);
-      setFormData(response.data);
+      const data = response.data;
+
+      // Normalize data: ensure providers are valid options we support
+      // If DB has old values like 'bhashini' or 'google', map them to 'sarvam' or 'groq'
+      const normalizedData = {
+        ...data,
+        stt_provider: ['sarvam'].includes(data.stt_provider) ? data.stt_provider : 'sarvam',
+        tts_provider: ['sarvam'].includes(data.tts_provider) ? data.tts_provider : 'sarvam',
+        llm_model: ['groq', 'openai'].includes(data.llm_model) ? data.llm_model : 'groq',
+      };
+
+      setConfig(normalizedData);
+      setFormData(normalizedData);
     } catch (error) {
       console.error('Error fetching config:', error);
       toast.error('Failed to load AI configuration');
@@ -94,9 +124,7 @@ export default function SuperAdminAIManagement() {
               onChange={(e) => setFormData({ ...formData, stt_provider: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
             >
-              <option value="google">Google Cloud Speech</option>
-              <option value="azure">Azure Speech</option>
-              <option value="aws">AWS Transcribe</option>
+              <option value="sarvam">Sarvam AI</option>
             </select>
           </div>
 
@@ -107,9 +135,7 @@ export default function SuperAdminAIManagement() {
               onChange={(e) => setFormData({ ...formData, tts_provider: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
             >
-              <option value="google">Google Cloud TTS</option>
-              <option value="azure">Azure TTS</option>
-              <option value="aws">AWS Polly</option>
+              <option value="sarvam">Sarvam AI</option>
             </select>
           </div>
 
@@ -120,10 +146,8 @@ export default function SuperAdminAIManagement() {
               onChange={(e) => setFormData({ ...formData, llm_model: e.target.value })}
               className="w-full px-3 py-2 border rounded-md"
             >
-              <option value="gpt-4">GPT-4</option>
-              <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
-              <option value="claude-3">Claude 3</option>
-              <option value="gemini-pro">Gemini Pro</option>
+              <option value="groq">Groq (Llama 3.1)</option>
+              <option value="openai">OpenAI (GPT-4o)</option>
             </select>
           </div>
 
@@ -272,34 +296,24 @@ export default function SuperAdminAIManagement() {
         </div>
       </Card>
 
-      {/* Status Indicators */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <CheckCircle className="h-8 w-8 text-green-600" />
+            <CheckCircle className={`h-8 w-8 ${health.system === 'operational' ? 'text-green-600' : 'text-amber-600'}`} />
             <div>
               <p className="text-sm text-gray-600">AI System Status</p>
-              <p className="text-lg font-bold">Operational</p>
+              <p className="text-lg font-bold capitalize">{health.system}</p>
             </div>
           </div>
         </Card>
 
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <Database className="h-8 w-8 text-blue-600" />
-            <div>
-              <p className="text-sm text-gray-600">RAG Vector DB</p>
-              <p className="text-lg font-bold">Connected</p>
-            </div>
-          </div>
-        </Card>
 
         <Card className="p-4">
           <div className="flex items-center gap-3">
-            <AlertTriangle className="h-8 w-8 text-yellow-600" />
+            <AlertTriangle className={`h-8 w-8 ${health.active_alerts > 0 ? 'text-red-600' : 'text-yellow-600'}`} />
             <div>
               <p className="text-sm text-gray-600">Active Alerts</p>
-              <p className="text-lg font-bold">0</p>
+              <p className="text-lg font-bold">{health.active_alerts}</p>
             </div>
           </div>
         </Card>
@@ -312,8 +326,8 @@ export default function SuperAdminAIManagement() {
           <div>
             <h4 className="font-bold text-red-800 mb-1">Configuration Warning</h4>
             <p className="text-sm text-red-700">
-              Changes to AI configuration will affect all ongoing and future calls across the platform. 
-              Test thoroughly before applying in production. High confidence thresholds may increase 
+              Changes to AI configuration will affect all ongoing and future calls across the platform.
+              Test thoroughly before applying in production. High confidence thresholds may increase
               escalation rates.
             </p>
           </div>

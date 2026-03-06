@@ -63,9 +63,9 @@ class PlatformConfig(Base):
     default_language = Column(String(10), default="hi")
     
     # Provider Configuration
-    stt_provider = Column(String(50), default="bhashini")  # bhashini, google
-    tts_provider = Column(String(50), default="bhashini")
-    llm_model = Column(String(100), default="gpt-4")
+    stt_provider = Column(String(50), default="sarvam")  # sarvam
+    tts_provider = Column(String(50), default="sarvam")  # sarvam
+    llm_model = Column(String(100), default="groq")  # groq, openai
     
     # RAG Configuration
     rag_strictness_level = Column(String(20), default="medium")  # low, medium, high, strict

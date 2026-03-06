@@ -823,8 +823,6 @@ async def update_platform_config(
     current_user: dict = Depends(get_current_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update platform configuration (DANGER ZONE)"""
-    
     # Get current config
     result = await db.execute(select(PlatformConfig).limit(1))
     config = result.scalar_one_or_none()
@@ -839,6 +837,22 @@ async def update_platform_config(
     
     # Update fields
     update_data = config_update.dict(exclude_unset=True)
+    
+    # Server-side Normalization: Force supported values only
+    SUPPORTED_STT = ["sarvam"]
+    SUPPORTED_TTS = ["sarvam"]
+    SUPPORTED_LLM = ["groq", "openai"]
+    
+    if "stt_provider" in update_data and update_data["stt_provider"] not in SUPPORTED_STT:
+        update_data["stt_provider"] = "sarvam"
+    if "tts_provider" in update_data and update_data["tts_provider"] not in SUPPORTED_TTS:
+        update_data["tts_provider"] = "sarvam"
+    if "llm_model" in update_data and update_data["llm_model"] not in SUPPORTED_LLM:
+        # Fallback to current or default
+        update_data["llm_model"] = update_data.get("llm_model", config.llm_model if config.llm_model in SUPPORTED_LLM else "groq")
+        if update_data["llm_model"] not in SUPPORTED_LLM:
+            update_data["llm_model"] = "groq"
+
     for field, value in update_data.items():
         old_values[field] = getattr(config, field)
         setattr(config, field, value)
@@ -852,6 +866,22 @@ async def update_platform_config(
     config.updated_at = datetime.now(timezone.utc)
     
     await db.commit()
+    
+    # Invalidate config cache so services pick up changes immediately
+    try:
+        from services.config_service import invalidate_config_cache
+        invalidate_config_cache()
+    except Exception:
+        pass  # Don't fail the request if cache invalidation fails
+    
+    # Print active providers for easy verification via docker logs
+    print(f"\n{'='*60}")
+    print(f"✅ AI CONFIG UPDATED SUCCESSFULLY")
+    print(f"   LLM Provider : {config.llm_model}")
+    print(f"   STT Provider : {config.stt_provider}")
+    print(f"   TTS Provider : {config.tts_provider}")
+    print(f"   Language     : {config.default_language}")
+    print(f"{'='*60}\n")
     
     # Create audit log
     await create_audit_log(

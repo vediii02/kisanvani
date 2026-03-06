@@ -52,7 +52,6 @@ Super Admin
 - **SQLAlchemy** - Python ORM for database operations
 - **MySQL 8.0** - Primary database
 - **Redis** - Caching and session management
-- **Qdrant** - Vector database for future RAG implementation
 - **JWT** - Authentication tokens
 - **Alembic** - Database migrations
 
@@ -313,7 +312,6 @@ voice-advisory/
 ## 📈 Future Enhancements
 
 ### Planned Features
-- [ ] Real RAG implementation with vector database
 - [ ] Multi-language support (English, regional languages)
 - [ ] Mobile app development
 - [ ] Advanced analytics dashboard

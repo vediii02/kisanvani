@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from db.session import get_db
+from db.base import AsyncSessionLocal
 from db.models.kb_entry import KBEntry
 from schemas.kb import KBEntryCreate, KBEntryUpdate, KBEntryResponse
 from kb.loader import kb_loader
@@ -105,24 +106,31 @@ async def delete_kb_entry(
 async def query_knowledge_base(request: KBQueryRequest):
     """Query the wheat knowledge base using RAG pipeline"""
     try:
-        from qdrant_client import QdrantClient
-        from sentence_transformers import SentenceTransformer
-        from groq import Groq
+        from openai import AsyncOpenAI
+        from db.models.knowledge_base import KnowledgeEntry
+        from db.session import get_db
+        from sqlalchemy import select
         
-        # Initialize
-        qdrant = QdrantClient(url="http://qdrant:6333")
-        model = SentenceTransformer('sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
-        groq = Groq(api_key=os.getenv('GROQ_API_KEY'))
+        # 1. Convert query to embedding using OpenAI
+        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        response = await client.embeddings.create(
+            input=request.query,
+            model="text-embedding-3-small",
+        )
+        query_embedding = response.data[0].embedding
         
-        # Step 1: Convert query to embedding
-        query_vector = model.encode(request.query).tolist()
-        
-        # Step 2: Search in Qdrant
-        results = qdrant.query_points(
-            collection_name="org_2_wheat_kb",
-            query=query_vector,
-            limit=request.limit
-        ).points
+        # 2. Search in Postgres using pgvector
+        async with AsyncSessionLocal() as db_session:
+            # We use a broad search here, but ideally should be scoped by organization
+            # For backward compatibility with the Qdrant endpoint which was org-specific
+            # we'll try to find any relevant entries.
+            stmt = (
+                select(KnowledgeEntry)
+                .order_by(KnowledgeEntry.embedding.cosine_distance(query_embedding))
+                .limit(request.limit)
+            )
+            result = await db_session.execute(stmt)
+            results = result.scalars().all()
         
         if not results:
             return KBQueryResponse(
@@ -131,13 +139,13 @@ async def query_knowledge_base(request: KBQueryRequest):
                 sources=[]
             )
         
-        # Step 3: Build context from results
+        # 3. Build context from results
         context = "\n\n".join([
-            result.payload.get('content', '')[:500] 
-            for result in results
+            (doc.content or "")[:500] 
+            for doc in results
         ])
         
-        # Step 4: Generate answer with Groq
+        # Step 4: Generate answer using configured LLM provider
         prompt = f"""आप एक expert कृषि सलाहकार हैं। नीचे दिए गए knowledge base के आधार पर किसान के सवाल का सटीक और helpful जवाब दें।
 
 Knowledge Base:
@@ -147,26 +155,45 @@ Knowledge Base:
 
 जवाब (2-3 वाक्यों में, clear और practical):"""
 
-        response = groq.chat.completions.create(
-            model='llama-3.3-70b-versatile',
-            messages=[
-                {'role': 'system', 'content': 'आप एक expert कृषि सलाहकार हैं।'},
-                {'role': 'user', 'content': prompt}
-            ],
-            max_tokens=250,
-            temperature=0.7
-        )
+        from services.config_service import get_platform_config
+        config = await get_platform_config()
+        llm_provider = config.get("llm_model", "groq")
+
+        if llm_provider == "openai":
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+            response = client.chat.completions.create(
+                model='gpt-4o',
+                messages=[
+                    {'role': 'system', 'content': 'आप एक expert कृषि सलाहकार हैं।'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                max_tokens=250,
+                temperature=0.7
+            )
+        else:
+            from groq import Groq
+            client = Groq(api_key=os.getenv('GROQ_API_KEY'))
+            response = client.chat.completions.create(
+                model='llama-3.3-70b-versatile',
+                messages=[
+                    {'role': 'system', 'content': 'आप एक expert कृषि सलाहकार हैं।'},
+                    {'role': 'user', 'content': prompt}
+                ],
+                max_tokens=250,
+                temperature=0.7
+            )
         
         answer = response.choices[0].message.content.strip()
         
         # Prepare sources
         sources = [
             {
-                'disease': result.payload.get('disease', 'Unknown'),
-                'topic': result.payload.get('topic', 'Unknown'),
-                'score': float(result.score)
+                'disease': getattr(doc, 'problem_type', 'Unknown'),
+                'topic': getattr(doc, 'crop', 'Unknown'),
+                'score': 0.0 # Score not directly available from simple scalar selection
             }
-            for result in results
+            for doc in results
         ]
         
         return KBQueryResponse(

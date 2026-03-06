@@ -339,13 +339,56 @@ async def root():
 
 @app.get("/api/health")
 async def health_check():
-    return {
+    health = {
         "status": "healthy",
+        "system": "operational",
         "services": {
-            "database": "PostgreSQL",
-            "redis": "connected"
-        }
+            "database": "disconnected",
+            "redis": "disconnected"
+        },
+        "active_alerts": 0
     }
+    
+    # 1. DB Check
+    try:
+        from db.base import engine
+        from sqlalchemy import text
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        health["services"]["database"] = "connected"
+    except Exception:
+        health["status"] = "unhealthy"
+        health["system"] = "degraded"
+        
+    # 2. Redis Check
+    try:
+        import redis.asyncio as redis
+        r = redis.from_url(os.getenv("REDIS_URL", "redis://redis:6379/0"))
+        await r.ping()
+        health["services"]["redis"] = "connected"
+    except Exception:
+        health["services"]["redis"] = "disconnected"
+        
+
+    # 4. Active Alerts Check (Critical Audit Logs in last 24h)
+    try:
+        from db.base import AsyncSessionLocal
+        from db.models.audit import AuditLog
+        from sqlalchemy import select, func
+        from datetime import datetime, timedelta, timezone
+        
+        async with AsyncSessionLocal() as db:
+            yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+            stmt = select(func.count(AuditLog.id)).where(
+                AuditLog.severity == "critical",
+                AuditLog.timestamp >= yesterday
+            )
+            result = await db.execute(stmt)
+            health["active_alerts"] = result.scalar()
+    except Exception:
+        pass
+
+    return health
 
 logger.info("✅ Kisan Vani AI Production Server with PostgreSQL Started")
 api_host = os.getenv("API_HOST", "0.0.0.0")
