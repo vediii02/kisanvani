@@ -129,7 +129,7 @@ async def get_companies(
     if status:
         query = query.where(Company.status == status)
     else:
-        # Default: only show approved companies (active or inactive)
+        # Show active and inactive companies only
         query = query.where(Company.status.in_(['active', 'inactive']))
     
     # Get total count
@@ -142,7 +142,7 @@ async def get_companies(
     if status:
         count_query = count_query.where(Company.status == status)
     else:
-        # Same default for count
+        # Show active and inactive companies only
         count_query = count_query.where(Company.status.in_(['active', 'inactive']))
     
     total_result = await db.execute(count_query)
@@ -282,7 +282,6 @@ async def create_company(
         if existing_email:
             raise HTTPException(status_code=400, detail=f"Email '{company_data.email}' already exists")
     
-    try:
         # Create company
         new_company = Company(
             organisation_id=org_id,
@@ -295,15 +294,23 @@ async def create_company(
             address=company_data.address,
             gst_number=company_data.gst_number,
             registration_number=company_data.registration_number,
-            status="pending" if (company_data.username and company_data.password) else company_data.status,
+            status=company_data.status,
             max_operators=company_data.max_operators,
             max_products=company_data.max_products,
             notes=company_data.notes
         )
         
-        db.add(new_company)
-        await db.commit()
-        await db.refresh(new_company)
+        try:
+            db.add(new_company)
+            await db.commit()
+            await db.refresh(new_company)
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Error creating company (DB): {str(e)}")
+            # Sometimes SQLAlchemy errors mention duplicate key
+            if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+                raise HTTPException(status_code=400, detail="A company with these details already exists.")
+            raise HTTPException(status_code=500, detail="Database error occurred while creating company.")
         
         # Create user for company if credentials provided
         company_user = None
@@ -316,14 +323,22 @@ async def create_company(
                 role="company",
                 organisation_id=org_id,
                 company_id=new_company.id,
-                is_active=False,
-                status="pending",
+                status=company_data.status,
                 created_at=datetime.now(timezone.utc)
             )
             
-            db.add(company_user)
-            await db.commit()
-            await db.refresh(company_user)
+            try:
+                db.add(company_user)
+                await db.commit()
+                await db.refresh(company_user)
+            except Exception as e:
+                await db.rollback()
+                logger.error(f"Error creating company user: {str(e)}")
+                # If user creation fails, we should ideally rollback company creation too,
+                # but since it's already committed, we return an error indicating partial success
+                if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+                    raise HTTPException(status_code=400, detail="Company created, but user creation failed: Username or Email already exists.")
+                raise HTTPException(status_code=500, detail="Company created, but failed to create user credentials.")
         
         logger.info(f"User {current_user['username']} created company: {new_company.name}")
         
@@ -348,11 +363,6 @@ async def create_company(
             created_at=new_company.created_at.isoformat() if new_company.created_at else None,
             updated_at=new_company.updated_at.isoformat() if new_company.updated_at else None
         )
-    
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error creating company: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating company: {str(e)}")
 
 @router.put("/{company_id}", response_model=CompanyResponse)
 async def update_company(
@@ -389,9 +399,12 @@ async def update_company(
     admin_user = admin_user_result.scalars().first()
     if admin_user:
         if company_data.name is not None:
-            admin_user.full_name = f'{company_data.name} Admin'
-        if company_data.email is not None:
+            admin_user.full_name = company_data.name
+        if company_data.email is not None and company_data.email != admin_user.email:
             admin_user.email = company_data.email
+            admin_user.username = company_data.email
+        if company_data.status is not None:
+            admin_user.status = company_data.status
         db.add(admin_user)
         
     await db.commit()

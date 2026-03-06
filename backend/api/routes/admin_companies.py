@@ -218,7 +218,7 @@ async def create_company(
                     username=username,
                     email=company_data.get("email") or f"{username}@{new_company.name.lower().replace(' ', '')}.com",
                     hashed_password=get_password_hash(company_data["password"]),
-                    full_name=f"{new_company.name} Admin",
+                    full_name=new_company.name,
                     role="company",
                     organisation_id=new_company.organisation_id,
                     company_id=new_company.id,
@@ -298,9 +298,12 @@ async def update_company(
         admin_user = admin_user_result.scalars().first()
         if admin_user:
             if "name" in company_data:
-                admin_user.full_name = f'{company_data["name"]} Admin'
-            if "email" in company_data:
+                admin_user.full_name = company_data["name"]
+            if "email" in company_data and company_data["email"] != admin_user.email:
                 admin_user.email = company_data["email"]
+                admin_user.username = company_data["email"]
+            if "status" in company_data:
+                admin_user.status = company_data["status"]
             db.add(admin_user)
             
         await db.commit()

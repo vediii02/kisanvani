@@ -1445,7 +1445,23 @@ async def delete_user(user_id: int, request: Request, current_user: dict = Depen
         raise HTTPException(status_code=404, detail="User not found")
         
     username = user.username
-    # Hard delete - database cascades will handle related records
+    
+    # First, handle dependent resources if this user is a primary owner of an organisation or company
+    if user.role == "organisation" and user.organisation_id:
+        from db.models.organisation import Organisation
+        org_result = await db.execute(select(Organisation).where(Organisation.id == user.organisation_id))
+        org = org_result.scalar_one_or_none()
+        if org:
+            await db.delete(org)
+            
+    elif user.role == "company" and user.company_id:
+        from db.models.company import Company
+        company_result = await db.execute(select(Company).where(Company.id == user.company_id))
+        company = company_result.scalar_one_or_none()
+        if company:
+            await db.delete(company)
+
+    # Finally, delete the user (will be handled by cascade if org/company was deleted, but safe to call)
     await db.delete(user)
     await db.commit()
     
@@ -1486,6 +1502,7 @@ async def update_user(
     
     if "email" in body:
         user.email = body["email"]
+        user.username = body["email"]
     if "full_name" in body:
         user.full_name = body["full_name"]
     if "role" in body:

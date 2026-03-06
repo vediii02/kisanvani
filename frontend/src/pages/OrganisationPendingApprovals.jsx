@@ -131,6 +131,14 @@ export default function OrganisationPendingApprovals() {
         </Badge>
       );
     }
+    if (status === 'inactive') {
+      return (
+        <Badge variant="secondary" className="bg-gray-100 text-gray-800">
+          <Ban className="h-3 w-3 mr-1" />
+          Inactive
+        </Badge>
+      );
+    }
     if (status === 'rejected') {
       return (
         <Badge variant="secondary" className="bg-red-100 text-red-800">
@@ -267,22 +275,26 @@ export default function OrganisationPendingApprovals() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{approval.full_name}</span>
+                          <span className="font-bold text-gray-900">
+                            {approval.full_name || approval.username}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Mail className="h-3 w-3" />
                           <span>{approval.email}</span>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          @{approval.username}
-                        </div>
+                        {approval.full_name && (
+                          <div className="text-xs text-muted-foreground ml-6">
+                            @{approval.username}
+                          </div>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <div className="font-medium">{approval.company_name}</div>
-                        <Badge variant="outline" className="text-xs">
-                          {approval.role}
+                        <div className="font-medium text-gray-900">{approval.company_name}</div>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider font-bold bg-gray-50">
+                          {approval.role.replace('_', ' ')}
                         </Badge>
                       </div>
                     </TableCell>
@@ -375,22 +387,26 @@ export default function OrganisationPendingApprovals() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{reg.full_name}</span>
+                          <span className="font-bold text-gray-900">
+                            {reg.full_name || reg.username}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Mail className="h-3 w-3" />
                           <span>{reg.email}</span>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          @{reg.username}
-                        </div>
+                        {reg.full_name && (
+                          <div className="text-xs text-muted-foreground ml-6">
+                            @{reg.username}
+                          </div>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">
-                        <div className="font-medium">{reg.company_name}</div>
-                        <Badge variant="outline" className="text-xs">
-                          {reg.role}
+                        <div className="font-medium text-gray-900">{reg.company_name}</div>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider font-bold bg-gray-50">
+                          {reg.role.replace('_', ' ')}
                         </Badge>
                       </div>
                     </TableCell>
@@ -446,15 +462,19 @@ export default function OrganisationPendingApprovals() {
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <User className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium">{rej.full_name}</span>
+                          <span className="font-bold text-gray-900">
+                            {rej.full_name || rej.username}
+                          </span>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Mail className="h-3 w-3" />
                           <span>{rej.email}</span>
                         </div>
-                        <div className="text-sm text-muted-foreground">
-                          @{rej.username}
-                        </div>
+                        {rej.full_name && (
+                          <div className="text-xs text-muted-foreground ml-6">
+                            @{rej.username}
+                          </div>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell>

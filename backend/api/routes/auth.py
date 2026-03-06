@@ -161,7 +161,8 @@ async def register(user: UserRegister, db: AsyncSession = Depends(get_db)):
             brand_name=user.company_name,
             contact_person=user.full_name,
             email=user.email,
-            status="active"
+            status="pending",
+            notes="self_registered"
         )
         
         db.add(new_company)
@@ -189,15 +190,41 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Check user status
-    if user.status == "pending":
+    # Check user status and parent entity status
+    is_inactive = user.status == "inactive"
+    
+    if not is_inactive and user.company_id:
+        result = await db.execute(select(Company).where(Company.id == user.company_id))
+        company = result.scalar_one_or_none()
+        if company and company.status == "inactive":
+            is_inactive = True
+            
+    if not is_inactive and user.organisation_id:
+        result = await db.execute(select(Organisation).where(Organisation.id == user.organisation_id))
+        org = result.scalar_one_or_none()
+        if org and org.status == "inactive":
+            is_inactive = True
+
+    if is_inactive:
+        if user.role == "organisation":
+            detail = "account deactivated please contact super admin for more details"
+        elif user.role == "company":
+            detail = "account deactivated please contact organisation admin for more details"
+        else:
+            detail = "account deactivated please contact support for more details"
+            
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail
+        )
+    elif user.status == "pending":
         if user.role == "organisation":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -212,7 +239,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is pending approval."
         )
-    
     elif user.status == "rejected":
         if user.role == "organisation":
             raise HTTPException(
@@ -228,11 +254,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSessi
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been rejected."
         )
-    
-    elif user.status == "inactive":
+
+    if not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account has been deactivated. Please contact support."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     
     # Create access token
@@ -262,7 +289,63 @@ async def login_json(credentials: UserLogin, db: AsyncSession = Depends(get_db))
     result = await db.execute(select(User).where(User.username == credentials.username))
     user = result.scalar_one_or_none()
     
-    if not user or not verify_password(credentials.password, user.hashed_password):
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+        )
+    
+    # Check user status and parent entity status
+    is_inactive = user.status == "inactive"
+    
+    if not is_inactive and user.company_id:
+        result = await db.execute(select(Company).where(Company.id == user.company_id))
+        company = result.scalar_one_or_none()
+        if company and company.status == "inactive":
+            is_inactive = True
+            
+    if not is_inactive and user.organisation_id:
+        result = await db.execute(select(Organisation).where(Organisation.id == user.organisation_id))
+        org = result.scalar_one_or_none()
+        if org and org.status == "inactive":
+            is_inactive = True
+
+    if is_inactive:
+        if user.role == "organisation":
+            detail = "account deactivated please contact super admin for more details"
+        elif user.role == "company":
+            detail = "account deactivated please contact organisation admin for more details"
+        else:
+            detail = "account deactivated please contact support for more details"
+            
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail
+        )
+    elif user.status == "pending":
+        if user.role == "organisation":
+            detail = "Your organisation registration is pending approval. Please wait for super admin approval."
+        elif user.role == "company":
+            detail = "Your company registration is pending approval. Please wait for organisation admin approval."
+        else:
+            detail = "Your account is pending approval."
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail
+        )
+    elif user.status == "rejected":
+        if user.role == "organisation":
+            detail = "Your organisation registration has been rejected. Please contact support for more details."
+        elif user.role == "company":
+            detail = "Your company registration has been rejected. Please contact your organisation admin."
+        else:
+            detail = "Your account has been rejected."
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail
+        )
+
+    if not verify_password(credentials.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",

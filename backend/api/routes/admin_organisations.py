@@ -265,6 +265,21 @@ async def update_organisation(
         
         org.updated_at = datetime.now(timezone.utc)
         
+        # Sync with organisation admin user
+        admin_user_result = await db.execute(
+            select(User).where(User.organisation_id == org.id, User.role == 'organisation')
+        )
+        admin_user = admin_user_result.scalars().first()
+        if admin_user:
+            if "name" in organisation_data:
+                admin_user.full_name = organisation_data["name"]
+            if "email" in organisation_data and organisation_data["email"] != admin_user.email:
+                admin_user.email = organisation_data["email"]
+                admin_user.username = organisation_data["email"]
+            if "status" in organisation_data:
+                admin_user.status = organisation_data["status"]
+            db.add(admin_user)
+
         await db.commit()
         await db.refresh(org)
         

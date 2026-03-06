@@ -222,23 +222,29 @@ async def get_approval_stats(
     # Count pending approvals
     pending_result = await db.execute(
         select(User)
+        .join(Company, User.company_id == Company.id)
         .where(
             and_(
                 User.role == "company",
                 User.status == "pending",
-                User.organisation_id == current_db_user.organisation_id
+                User.organisation_id == current_db_user.organisation_id,
+                Company.status.in_(["active", "pending", "inactive"])  # Only self-registered companies are set to active implicitly while user is pending
             )
         )
     )
     pending_count = len(pending_result.scalars().all())
     
     # Count approved company users
+    # Now specifically checking if the company was self-registered (via notes flag) to separate from admin-created users
     approved_result = await db.execute(
-        select(User).where(
+        select(User)
+        .join(Company, User.company_id == Company.id)
+        .where(
             and_(
                 User.role == "company",
                 User.status == "active",
-                User.organisation_id == current_db_user.organisation_id
+                User.organisation_id == current_db_user.organisation_id,
+                Company.notes == "self_registered"
             )
         )
     )
@@ -249,7 +255,8 @@ async def get_approval_stats(
         select(Company).where(
             and_(
                 Company.organisation_id == current_db_user.organisation_id,
-                Company.status == "rejected"
+                Company.status == "rejected",
+                Company.notes == "self_registered"
             )
         )
     )
@@ -264,7 +271,8 @@ async def get_approval_stats(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
-                Company.status.in_(["active", "pending"]),
+                User.status.in_(["active", "pending"]),
+                Company.status.in_(["active", "pending", "inactive"]),
                 User.created_at >= today
             )
         )
@@ -277,6 +285,7 @@ async def get_approval_stats(
             and_(
                 Company.organisation_id == current_db_user.organisation_id,
                 Company.status == "rejected",
+                Company.notes == "self_registered",
                 Company.updated_at >= today
             )
         )
@@ -321,7 +330,9 @@ async def get_today_registrations(
             and_(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
-                Company.status.in_(["active", "pending"]),
+                User.status.in_(["active", "pending"]),
+                Company.status.in_(["active", "pending", "inactive"]),
+                Company.notes == "self_registered",
                 User.created_at >= today
             )
         )
@@ -378,6 +389,7 @@ async def get_today_rejections(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
                 Company.status == "rejected",
+                Company.notes == "self_registered",
                 Company.updated_at >= today
             )
         )

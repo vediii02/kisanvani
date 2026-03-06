@@ -17,7 +17,6 @@ export default function OrganisationCompanies() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedCompany, setSelectedCompany] = useState(null);
-  const [createUserAccess, setCreateUserAccess] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     business_type: '',
@@ -32,7 +31,8 @@ export default function OrganisationCompanies() {
     max_products: 100,
     notes: '',
     username: '',
-    password: ''
+    password: '',
+    login_email: ''
   });
 
   useEffect(() => {
@@ -59,37 +59,36 @@ export default function OrganisationCompanies() {
       return;
     }
 
-    // Validate login credentials if checkbox is checked
-    if (createUserAccess) {
-      if (!formData.email) {
-        toast.error('Email is required for login access');
-        return;
-      }
-      if (!formData.password) {
-        toast.error('Password is required for login access');
-        return;
-      }
-      if (formData.password.length < 6) {
-        toast.error('Password must be at least 6 characters');
-        return;
-      }
+    if (!formData.email) {
+      toast.error('Contact Email is required');
+      return;
+    }
+    if (!formData.login_email) {
+      toast.error('Login Email is required for login access');
+      return;
+    }
+    if (formData.email !== formData.login_email) {
+      toast.error('Login Email must be the same as Contact Email');
+      return;
+    }
+    if (!formData.password) {
+      toast.error('Password is required for login access');
+      return;
+    }
+    if (formData.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
     }
 
     setLoading(true);
     try {
-      // Prepare data - username is email, only send password if createUserAccess is true
       const submitData = { ...formData };
-      if (createUserAccess) {
-        submitData.username = formData.email; // Username = Email
-      } else {
-        delete submitData.username;
-        delete submitData.password;
-      }
+      submitData.username = formData.login_email; // Username = Email
+      delete submitData.login_email;
 
       await api.post('/organisation/companies', submitData);
-      toast.success(createUserAccess
-        ? 'Company and user account created successfully! Login with email: ' + formData.email
-        : 'Company created successfully');
+      toast.success('Company and user account created successfully! Login with email: ' + formData.email);
+      setShowCreateModal(false);
       resetForm();
       fetchCompanies();
     } catch (error) {
@@ -110,6 +109,12 @@ export default function OrganisationCompanies() {
           }).join(', ');
         } else if (data.message) {
           errorMessage = data.message;
+        }
+      } else if (error.message) {
+        // Fallback for network errors like 504 Gateway Timeout
+        errorMessage = `Network Error: ${error.message}`;
+        if (error.response?.status === 504 || error.message.includes('504') || error.message.includes('timeout')) {
+          errorMessage = 'Server timeout: The operation took too long. Please check your connection or try again.';
         }
       }
       toast.error(errorMessage);
@@ -194,8 +199,9 @@ export default function OrganisationCompanies() {
       gst_number: company.gst_number || '',
       registration_number: company.registration_number || '',
       status: company.status || 'active',
-      max_company_users: company.max_company_users || 5,
-      max_products: company.max_products || 100,
+      state: company.state || '',
+      city: company.city || '',
+      pincode: company.pincode || '',
       notes: company.notes || ''
     });
     setShowEditModal(true);
@@ -213,13 +219,14 @@ export default function OrganisationCompanies() {
       gst_number: '',
       registration_number: '',
       status: 'active',
-      max_company_users: 5,
-      max_products: 100,
+      state: '',
+      city: '',
+      pincode: '',
       notes: '',
       username: '',
-      password: ''
+      password: '',
+      login_email: ''
     });
-    setCreateUserAccess(false);
   };
 
   const filteredCompanies = companies.filter(company =>
@@ -406,6 +413,18 @@ export default function OrganisationCompanies() {
                 />
               </div>
               <div>
+                <Label htmlFor="brand_name">Brand Name</Label>
+                <Input
+                  id="brand_name"
+                  value={formData.brand_name}
+                  onChange={(e) => setFormData({ ...formData, brand_name: e.target.value })}
+                  placeholder="Trading name or brand"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
                 <Label htmlFor="business_type">Business Type</Label>
                 <Input
                   id="business_type"
@@ -438,13 +457,14 @@ export default function OrganisationCompanies() {
             </div>
 
             <div>
-              <Label htmlFor="email">Contact Email</Label>
+              <Label htmlFor="email">Contact Email *</Label>
               <Input
                 id="email"
                 type="email"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 placeholder="contact@company.com"
+                required
               />
             </div>
 
@@ -481,23 +501,30 @@ export default function OrganisationCompanies() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="max_company_users">Max Company Users</Label>
+                <Label htmlFor="state">State</Label>
                 <Input
-                  id="max_company_users"
-                  type="number"
-                  value={formData.max_company_users}
-                  onChange={(e) => setFormData({ ...formData, max_company_users: parseInt(e.target.value) || 5 })}
-                  placeholder="5"
+                  id="state"
+                  value={formData.state}
+                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                  placeholder="State"
                 />
               </div>
               <div>
-                <Label htmlFor="max_products">Max Products</Label>
+                <Label htmlFor="city">City</Label>
                 <Input
-                  id="max_products"
-                  type="number"
-                  value={formData.max_products}
-                  onChange={(e) => setFormData({ ...formData, max_products: parseInt(e.target.value) || 100 })}
-                  placeholder="100"
+                  id="city"
+                  value={formData.city}
+                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                  placeholder="City"
+                />
+              </div>
+              <div>
+                <Label htmlFor="pincode">Pincode</Label>
+                <Input
+                  id="pincode"
+                  value={formData.pincode}
+                  onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                  placeholder="Pincode"
                 />
               </div>
             </div>
@@ -516,7 +543,7 @@ export default function OrganisationCompanies() {
             </div>
 
             <div>
-              <Label htmlFor="notes">Notes</Label>
+              <Label htmlFor="notes">Description</Label>
               <Input
                 id="notes"
                 value={formData.notes}
@@ -527,51 +554,44 @@ export default function OrganisationCompanies() {
 
             {/* Login Access Section */}
             <div className="border-t pt-4 mt-4">
-              <div className="flex items-center space-x-2 mb-4">
-                <Checkbox
-                  id="createUserAccess"
-                  checked={createUserAccess}
-                  onCheckedChange={setCreateUserAccess}
-                />
-                <Label htmlFor="createUserAccess" className="font-semibold cursor-pointer">
-                  Create login access for this company
+              <div className="mb-4">
+                <Label className="font-semibold text-primary">
+                  Login Access for this company (Required)
                 </Label>
               </div>
 
-              {createUserAccess && (
-                <div className="space-y-4 pl-6 border-l-2 border-primary/20">
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Company will be able to login using their email address
-                  </p>
-                  <div className="space-y-3">
-                    <div>
-                      <Label htmlFor="login_email">Login Email * (This will be the username)</Label>
-                      <Input
-                        id="login_email"
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        placeholder="company@example.com"
-                        required={createUserAccess}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="password">Password *</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        value={formData.password}
-                        onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                        placeholder="Minimum 6 characters"
-                        required={createUserAccess}
-                      />
-                    </div>
+              <div className="space-y-4 pl-6 border-l-2 border-primary/20">
+                <p className="text-sm text-muted-foreground mb-3">
+                  Company will be able to login using their email address
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="login_email">Login Email * (This will be the username)</Label>
+                    <Input
+                      id="login_email"
+                      type="email"
+                      value={formData.login_email}
+                      onChange={(e) => setFormData({ ...formData, login_email: e.target.value })}
+                      placeholder="company@example.com"
+                      required
+                    />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    💡 Company will login with: <strong>{formData.email || 'their email'}</strong>
-                  </p>
+                  <div>
+                    <Label htmlFor="password">Password *</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      placeholder="Minimum 6 characters"
+                      required
+                    />
+                  </div>
                 </div>
-              )}
+                <p className="text-xs text-muted-foreground">
+                  💡 Company will login with: <strong>{formData.login_email || 'their email'}</strong>
+                </p>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -600,6 +620,18 @@ export default function OrganisationCompanies() {
                   required
                 />
               </div>
+              <div>
+                <Label htmlFor="edit_brand_name">Brand Name</Label>
+                <Input
+                  id="edit_brand_name"
+                  value={formData.brand_name}
+                  onChange={(e) => setFormData({ ...formData, brand_name: e.target.value })}
+                  placeholder="Trading name or brand"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="edit_business_type">Business Type</Label>
                 <Input
@@ -669,6 +701,36 @@ export default function OrganisationCompanies() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
+                <Label htmlFor="edit_state">State</Label>
+                <Input
+                  id="edit_state"
+                  value={formData.state}
+                  onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                  placeholder="State"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit_city">City</Label>
+                <Input
+                  id="edit_city"
+                  value={formData.city}
+                  onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+                  placeholder="City"
+                />
+              </div>
+              <div>
+                <Label htmlFor="edit_pincode">Pincode</Label>
+                <Input
+                  id="edit_pincode"
+                  value={formData.pincode}
+                  onChange={(e) => setFormData({ ...formData, pincode: e.target.value })}
+                  placeholder="Pincode"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
                 <Label htmlFor="edit_max_company_users">Max Company Users</Label>
                 <Input
                   id="edit_max_company_users"
@@ -702,7 +764,7 @@ export default function OrganisationCompanies() {
             </div>
 
             <div>
-              <Label htmlFor="edit_notes">Notes</Label>
+              <Label htmlFor="edit_notes">Description</Label>
               <Input
                 id="edit_notes"
                 value={formData.notes}
@@ -719,6 +781,6 @@ export default function OrganisationCompanies() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </div >
   );
 }
