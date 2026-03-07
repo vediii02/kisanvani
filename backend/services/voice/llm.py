@@ -2,7 +2,7 @@ import os
 import uuid
 from typing import Any
 from dotenv import load_dotenv
-
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
@@ -36,9 +36,18 @@ def _create_groq_llm():
 def _create_openai_llm():
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         temperature=0.3,
         api_key=openai_api_key,
+    )
+
+def _create_gemini_llm():
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    return ChatGoogleGenerativeAI(
+        model="gemini-2.0-flash",
+        temperature=0.3,
+        google_api_key=api_key,
     )
 
 # Default LLM (used as fallback)
@@ -52,6 +61,9 @@ async def get_llm():
         if provider == "openai":
             logger.info("Using OpenAI (GPT-4o) as LLM provider")
             return _create_openai_llm()
+        elif provider == "gemini":
+            logger.info("Using Google (Gemini 2.0 Flash) as LLM provider")
+            return _create_gemini_llm()
         else:
             logger.info("Using Groq (Llama 3.1) as LLM provider")
             return _create_groq_llm()
@@ -80,7 +92,7 @@ async def init_checkpointer():
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from psycopg_pool import AsyncConnectionPool
-        pool = AsyncConnectionPool(conninfo=_pg_conn_str, open=False)
+        pool = AsyncConnectionPool(conninfo=_pg_conn_str, open=False, kwargs={"autocommit": True})
         await pool.open()
         checkpointer = AsyncPostgresSaver(pool)
         await checkpointer.setup()
@@ -94,12 +106,29 @@ async def init_checkpointer():
 # ==========================================
 # 2. Embedding + RAG Retrieval
 # ==========================================
-async def _fetch_query_embedding(query: str) -> list[float]:
+async def _fetch_query_embedding_google(query: str) -> list[float]:
+    embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+    return await embeddings.aembed_query(query)
+
+async def _fetch_query_embedding_openai(query: str) -> list[float]:
     response = await openai_client.embeddings.create(
         input=query,
         model="text-embedding-3-small",
     )
     return response.data[0].embedding
+
+async def fetch_embedding(text: str) -> list[float]:
+    try:
+        config = await get_platform_config()
+        provider = config.get("llm_model", "groq")
+        if provider == "gemini":
+            logger.info("Using Google Gemini for embeddings")
+            return await _fetch_query_embedding_google(text)
+    except Exception as e:
+        logger.error(f"Failed to get PlatformConfig for embedding dict, falling back to OpenAI: {e}")
+    
+    logger.info("Using OpenAI text-embedding-3-small for embeddings")
+    return await _fetch_query_embedding_openai(text)
 
 
 async def _pgvector_search(
@@ -109,7 +138,7 @@ async def _pgvector_search(
     organisation_id: int,
     company_id: int | None = None,
 ) -> list[KnowledgeEntry]:
-    query_vector = await _fetch_query_embedding(query)
+    query_vector = await fetch_embedding(query)
 
     async with AsyncSessionLocal() as db:
         filters = [
@@ -174,6 +203,87 @@ async def retrieve_context(query: str, organisation_id: int | None = None, compa
     except Exception as e:
         logger.error("RAG retrieval failed: %s", e, exc_info=True)
         return f"Retrieval error: {str(e)}"
+    
+@tool
+async def update_farmer_profile(
+    name: str | None = None,
+    village: str | None = None,
+    district: str | None = None,
+    state: str | None = None,
+    crop_type: str | None = None,
+    land_size: str | None = None,
+    crop_area: str | None = None,
+    problem_area: str | None = None,
+    crop_age_days: str | None = None,
+) -> str:
+    """Update or create the farmer's profile in the database with information 
+    gathered during the conversation. Use this tool as soon as you get any 
+    personal or crop details from the farmer.
+
+    Args:
+        name: Farmer's name
+        village: Farmer's village
+        district: Farmer's district
+        state: Farmer's state
+        crop_type: Name of the crop
+        land_size: Total land size (e.g. "5 acres")
+        crop_area: Area dedicated to this specific crop
+        problem_area: Specific part of crop affected (e.g. "leaves", "roots")
+        crop_age_days: Age of the crop in days
+    """
+    from services.voice.session_context import get_current_phone_number
+    phone_number = get_current_phone_number()
+    
+    if not phone_number:
+        logger.warning("Attempted to update farmer profile without a phone number in context")
+        return "Error: No phone number associated with this session. Profile not updated."
+
+    logger.info("Updating farmer profile for phone=%s: name=%r, village=%r, crop=%r", 
+                phone_number, name, village, crop_type)
+
+    try:
+        from db.models.farmer import Farmer
+        from sqlalchemy import select, update, insert
+
+        async with AsyncSessionLocal() as db:
+            # Check if farmer exists
+            stmt = select(Farmer).where(Farmer.phone_number == phone_number)
+            result = await db.execute(stmt)
+            farmer = result.scalar_one_or_none()
+
+            # Prepare values (filter out None)
+            vals = {
+                "name": name,
+                "village": village,
+                "district": district,
+                "state": state,
+                "crop_type": crop_type,
+                "land_size": land_size,
+                "crop_area": crop_area,
+                "problem_area": problem_area,
+                "crop_age_days": crop_age_days
+            }
+            update_vals = {k: v for k, v in vals.items() if v is not None}
+
+            if farmer:
+                if update_vals:
+                    await db.execute(
+                        update(Farmer)
+                        .where(Farmer.phone_number == phone_number)
+                        .values(**update_vals)
+                    )
+            else:
+                # For insert, merge defaults with provided values
+                insert_vals = {"phone_number": phone_number}
+                insert_vals.update(update_vals)
+                await db.execute(insert(Farmer).values(**insert_vals))
+                
+            await db.commit()
+            
+        return "Farmer profile successfully updated in database."
+    except Exception as e:
+        logger.error("Failed to update farmer profile: %s", e, exc_info=True)
+        return f"Error updating profile: {str(e)}"
 
 
 # ==========================================
@@ -208,6 +318,8 @@ a) Name: "Aapka shubh naam kya hai?"
 b) Location: Village, Tehsil, District, State — ask naturally, one by one
 c) Confirm back critical info: "Aap [gaon] se hain, sahi samjhi main?"
 
+Use the `update_farmer_profile` tool immediately after receiving each piece of info (name, village, etc.) to save it.
+
 Do NOT stack questions. Ask one, wait for answer, then ask next.
 
 STEP 3 — CROP DETAILS (One question at a time):
@@ -215,6 +327,8 @@ a) Crop name: "Aapne kaunsi fasal lagai hai?"
 b) Crop variety: only if farmer mentions or if relevant
 c) Crop stage: "Fasal abhi kis stage mein hai? Buwai ke kitne din ho gaye?"
 d) Irrigation: "Sinchai kaise karte hain? Borewell, nahar, ya baarish pe?"
+
+Use the `update_farmer_profile` tool to save crop information as you get it.
 
 STEP 4 — PROBLEM IDENTIFICATION:
 a) Problem category: "Kya dikkat aa rahi hai? Keede, bimari, kharpatwar, ya kuch aur?"
@@ -275,14 +389,37 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     current_llm = await get_llm()
 
     if organisation_id is None:
-        tools = [retrieve_context]
+        tools = [retrieve_context, update_farmer_profile]
     else:
+        # Access the underlying coroutines of the @tool-decorated functions
+        _retrieve_context_fn = retrieve_context.coroutine
+        _update_farmer_profile_fn = update_farmer_profile.coroutine
+
         @tool("retrieve_context")
         async def retrieve_context_scoped(query: str) -> str:
             """Search agricultural knowledge base for this organisation's crop advisory data."""
-            return await retrieve_context(query=query, organisation_id=organisation_id, company_id=company_id)
+            return await _retrieve_context_fn(query=query, organisation_id=organisation_id, company_id=company_id)
 
-        tools = [retrieve_context_scoped]
+        @tool("update_farmer_profile")
+        async def update_farmer_profile_scoped(
+            name: str | None = None,
+            village: str | None = None,
+            district: str | None = None,
+            state: str | None = None,
+            crop_type: str | None = None,
+            land_size: str | None = None,
+            crop_area: str | None = None,
+            problem_area: str | None = None,
+            crop_age_days: str | None = None,
+        ) -> str:
+            """Update or create the farmer's profile in the database with information gathered during the conversation."""
+            return await _update_farmer_profile_fn(
+                name=name, village=village, district=district, state=state,
+                crop_type=crop_type, land_size=land_size, crop_area=crop_area,
+                problem_area=problem_area, crop_age_days=crop_age_days,
+            )
+
+        tools = [retrieve_context_scoped, update_farmer_profile_scoped]
 
     executor = create_react_agent(
         model=current_llm,

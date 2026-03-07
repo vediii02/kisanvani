@@ -31,6 +31,8 @@ from services.voice.session_context import (
     reset_current_organisation_id,
     set_current_company_id,
     reset_current_company_id,
+    set_current_phone_number,
+    reset_current_phone_number,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -136,9 +138,13 @@ async def conversation_endpoint(websocket: WebSocket):
         websocket.query_params.get("organisation_id") or websocket.query_params.get("org_id")
     )
     company_id = _parse_optional_int(websocket.query_params.get("company_id"))
+    from_number = websocket.query_params.get("from_number") or websocket.query_params.get("phone")
+    
     session_ctx_token = set_current_organisation_id(organisation_id)
     company_ctx_token = set_current_company_id(company_id)
-    logger.info(f"Client connected to /ws/conversation - org: {organisation_id}, company: {company_id}")
+    phone_ctx_token = set_current_phone_number(from_number)
+    
+    logger.info(f"Client connected to /ws/conversation - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     
     async def websocket_audio_stream():
         try:
@@ -180,6 +186,7 @@ async def conversation_endpoint(websocket: WebSocket):
     finally:
          reset_current_organisation_id(session_ctx_token)
          reset_current_company_id(company_ctx_token)
+         reset_current_phone_number(phone_ctx_token)
          try:
              await websocket.close()
          except RuntimeError:
@@ -192,9 +199,13 @@ async def exotel_ws_endpoint(websocket: WebSocket):
         websocket.query_params.get("organisation_id") or websocket.query_params.get("org_id")
     )
     company_id = _parse_optional_int(websocket.query_params.get("company_id"))
+    from_number = websocket.query_params.get("from_number") or websocket.query_params.get("phone")
+
     session_ctx_token = set_current_organisation_id(organisation_id)
     company_ctx_token = set_current_company_id(company_id)
-    logger.info(f"Exotel connected to /ws/exotel - org: {organisation_id}, company: {company_id}")
+    phone_ctx_token = set_current_phone_number(from_number)
+    
+    logger.info(f"Exotel connected to /ws/exotel - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     
     adapter = ExotelAdapter()
     call_active = True
@@ -283,6 +294,17 @@ async def exotel_ws_endpoint(websocket: WebSocket):
                                             logger.warning(f"FALLBACK: Using default company: org={organisation_id}, company={company_id}")
                             except Exception as e:
                                 logger.error(f"Error looking up company by phone: {e}")
+                        
+                        # Also update phone number if available in adapter
+                        if adapter.from_number:
+                            # Use nonlocal as these are defined in exotel_ws_endpoint
+                            nonlocal from_number, phone_ctx_token
+                            if adapter.from_number != from_number:
+                                from_number = adapter.from_number
+                                reset_current_phone_number(phone_ctx_token)
+                                phone_ctx_token = set_current_phone_number(from_number)
+                                logger.info(f"Phone number updated from Exotel: {from_number}")
+                        
                         continue
 
                     if event == "stop":
@@ -323,6 +345,7 @@ async def exotel_ws_endpoint(websocket: WebSocket):
     finally:
          reset_current_organisation_id(session_ctx_token)
          reset_current_company_id(company_ctx_token)
+         reset_current_phone_number(phone_ctx_token)
          try:
              await websocket.close()
          except RuntimeError:
