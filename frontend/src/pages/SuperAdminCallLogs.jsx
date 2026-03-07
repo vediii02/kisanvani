@@ -296,7 +296,7 @@ const SuperAdminCallLogs = () => {
             </div>
 
             <div className="flex gap-2 lg:col-span-2">
-              <Button type="submit" className="flex-1 h-9 bg-primary text-white hover:bg-primary/90">
+              <Button type="submit" className="flex-1 h-9 bg-indigo-600 hover:bg-indigo-700 text-white">
                 <Search className="w-4 h-4 mr-2" />
                 Apply
               </Button>

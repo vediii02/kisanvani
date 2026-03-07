@@ -188,12 +188,11 @@ export default function SuperAdminDashboard() {
       <div className="flex justify-between items-start">
         <div>
           <div className="flex items-center gap-3">
-            <div className="p-3 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg">
+            <div className="p-3 bg-gradient-to-br rounded-xl bg-green-800 shadow-lg">
               <Shield className="h-8 w-8 text-white" />
             </div>
             <div>
               <h1 className="text-4xl font-bold flex items-center gap-2 text-gray-900 tracking-tight">
-                <LayoutDashboard className="h-10 w-10 text-primary" />
                 Super Admin Platform
               </h1>
               <p className="text-gray-600 mt-1 text-lg">National-scale Multi-tenant SaaS Control Center</p>

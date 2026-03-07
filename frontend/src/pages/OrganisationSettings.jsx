@@ -100,7 +100,7 @@ const OrganisationSettings = () => {
                                             key={tab.id}
                                             onClick={() => setActiveTab(tab.id)}
                                             className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${activeTab === tab.id
-                                                ? 'bg-slate-900 text-white shadow-md'
+                                                ? 'bg-green-900 text-white shadow-md'
                                                 : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                                                 }`}
                                         >
@@ -159,7 +159,7 @@ const OrganisationSettings = () => {
                                         />
                                     </div>
 
-                                    <Button type="submit" disabled={loading} className="bg-slate-900 hover:bg-slate-800 text-white">
+                                    <Button type="submit" disabled={loading} className="bg-green-800 hover:bg-green-900 text-white">
                                         {loading ? 'Updating...' : 'Update Password'}
                                     </Button>
                                 </form>

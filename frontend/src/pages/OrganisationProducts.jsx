@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Package, Plus, Edit2, Trash2, Search, Filter, AlertCircle, X, Upload, Download, FileText } from 'lucide-react';
 import api from '../api/api';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 // Category and Sub-category mapping
 const CATEGORY_OPTIONS = {
@@ -492,19 +493,25 @@ const OrganisationProducts = () => {
                       </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-right text-sm font-medium space-x-2">
-                    <button
+                  <td className="px-6 py-4 text-right text-sm font-medium flex justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => handleEdit(product)}
-                      className="text-indigo-600 hover:text-indigo-900"
+                      title="Edit"
                     >
-                      <Edit2 className="h-4 w-4 inline" />
-                    </button>
-                    <button
+                      <Edit2 className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50"
                       onClick={() => handleDelete(product.id)}
-                      className="text-red-600 hover:text-red-900"
+                      title="Delete"
                     >
-                      <Trash2 className="h-4 w-4 inline" />
-                    </button>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </td>
                 </tr>
               ))}

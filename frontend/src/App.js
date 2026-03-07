@@ -4,7 +4,6 @@ import { Toaster } from 'sonner';
 import { AuthProvider } from '@/contexts/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Sidebar from '@/components/Sidebar';
-import TopHeader from '@/components/TopHeader';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import SuperAdminDashboard from '@/pages/SuperAdminDashboard';
@@ -14,7 +13,6 @@ import ProductManagement from '@/pages/ProductManagement';
 import OrganisationDashboardNew from '@/pages/OrganisationDashboardNew';
 import OrganisationsPlatformManagement from '@/pages/OrganisationsPlatformManagement';
 import OrganisationDetailView from '@/pages/OrganisationDetailView';
-import ProductSafetyControl from '@/pages/ProductSafetyControl';
 import SuperAdminCallLogs from '@/pages/SuperAdminCallLogs';
 import KBGovernance from '@/pages/KBGovernance';
 import OrganisationCompanies from '@/pages/OrganisationCompanies';
@@ -35,14 +33,15 @@ import SuperAdminAIManagement from '@/pages/SuperAdminAIManagement';
 import PendingApprovals from '@/pages/PendingApprovals';
 import OrganisationPendingApprovals from '@/pages/OrganisationPendingApprovals';
 import SuperAdminSettings from '@/pages/SuperAdminSettings';
+import ForgotPassword from '@/pages/ForgotPassword';
+import ResetPassword from '@/pages/ResetPassword';
 
 function AuthenticatedLayout({ children }) {
   return (
     <div className="flex min-h-screen">
       <Sidebar />
       <div className="flex-1 pl-64">
-        <TopHeader />
-        <main className="pt-16 p-8 h-full bg-gray-50/30">{children}</main>
+        <main className="p-8 h-full bg-gray-50/30">{children}</main>
       </div>
     </div>
   );
@@ -58,6 +57,8 @@ function App() {
             {/* Public routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password/:token" element={<ResetPassword />} />
 
             <Route
               path="/superadmin"
@@ -330,16 +331,7 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route
-              path="/superadmin/product-safety"
-              element={
-                <ProtectedRoute requiredRole="superadmin">
-                  <AuthenticatedLayout>
-                    <ProductSafetyControl />
-                  </AuthenticatedLayout>
-                </ProtectedRoute>
-              }
-            />
+
             <Route
               path="/superadmin/call-logs"
               element={

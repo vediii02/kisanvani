@@ -20,6 +20,8 @@ class User(Base):
     organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="SET NULL"), nullable=True)  # For organisation role
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)  # For company role
     status = Column(String(20), default="active")  # active, inactive, rejected, pending
+    reset_token = Column(String(500), nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(
         DateTime(timezone=True),

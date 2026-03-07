@@ -355,56 +355,72 @@ export default function BrandManagement() {
           </Card>
         ) : (
           filteredBrands.map((brand) => (
-            <Card key={brand.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <CardTitle className="text-xl">{brand.name}</CardTitle>
-                    <CardDescription className="mt-1">
-                      {getCompanyName(brand.company_id)}
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleOpenDialog(brand)}
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(brand.id)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+            <Card key={brand.id} className="p-6 hover:shadow-lg transition-shadow">
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  {brand.logo_url ? (
+                    <img
+                      src={brand.logo_url}
+                      alt={brand.name}
+                      className="w-12 h-12 rounded-lg object-contain bg-gray-50 border"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                      <Tag className="w-6 h-6 text-primary" />
+                    </div>
+                  )}
+                  <div>
+                    <h3 className="font-semibold text-lg leading-tight">{brand.name}</h3>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-xs font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                        {getCompanyName(brand.company_id)}
+                      </span>
+                      <Badge variant={brand.is_active ? 'default' : 'secondary'} className="text-[10px] px-2 py-0 font-medium">
+                        {brand.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
-              </CardHeader>
-              <CardContent>
-                {brand.description && (
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {brand.description}
-                  </p>
-                )}
+              </div>
+
+              {brand.description && (
+                <p className="text-sm text-muted-foreground mb-4 line-clamp-2 min-h-[40px]">
+                  {brand.description}
+                </p>
+              )}
+
+              <div className="flex items-center justify-between pt-4 border-t">
                 <div className="flex items-center gap-2">
-                  <Badge variant={brand.is_active ? 'default' : 'secondary'}>
-                    {brand.is_active ? 'Active' : 'Inactive'}
-                  </Badge>
                   {brand.product_count !== undefined && (
-                    <Badge variant="outline">
+                    <Badge variant="outline" className="text-[10px] font-medium">
                       {brand.product_count} Products
                     </Badge>
                   )}
+                  {brand.created_at && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {new Date(brand.created_at).toLocaleDateString()}
+                    </span>
+                  )}
                 </div>
-                {brand.created_at && (
-                  <p className="text-xs text-muted-foreground mt-3">
-                    Created: {new Date(brand.created_at).toLocaleDateString()}
-                  </p>
-                )}
-              </CardContent>
+                <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={() => handleOpenDialog(brand)}
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/5"
+                    onClick={() => handleDelete(brand.id)}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
             </Card>
           ))
         )}

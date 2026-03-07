@@ -61,7 +61,7 @@ const SuperAdminSettings = () => {
                     <Card>
                         <CardHeader>
                             <div className="flex items-center gap-2">
-                                <Lock className="h-5 w-5 text-slate-600" />
+                                <Lock className="h-5 w-5 text-green-800" />
                                 <CardTitle>Security Settings</CardTitle>
                             </div>
                             <CardDescription>Update your password to keep your account secure</CardDescription>
@@ -106,7 +106,7 @@ const SuperAdminSettings = () => {
                                     />
                                 </div>
 
-                                <Button type="submit" disabled={loading} className="w-full md:w-auto bg-slate-900 hover:bg-slate-800 text-white">
+                                <Button type="submit" disabled={loading} className="w-full md:w-auto bg-green-800 hover:bg-green-900 text-white">
                                     {loading ? 'Updating...' : 'Update Password'}
                                 </Button>
                             </form>
