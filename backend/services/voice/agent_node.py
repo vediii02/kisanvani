@@ -100,36 +100,46 @@ async def agent_stream(
                 await output_queue.put(AgentChunkEvent.create(final))
         except asyncio.CancelledError:
             logger.info("AI response cancelled (barge-in)")
-        except ValueError as e:
-            if "ToolMessage" in str(e) and "tool_calls" in str(e):
-                logger.warning("Detected tool call state corruption. Attempting to inject missing ToolMessages to fix state.")
+        except Exception as e:
+            error_str = str(e)
+            if "tool_calls" in error_str and ("ToolMessage" in error_str or "not have response messages" in error_str or "400" in error_str or "invalid_request_error" in error_str):
+                logger.warning("Detected tool call state corruption. Attempting to fix state by removing dangling tool calls.")
                 try:
                     state = await session_agent_executor.aget_state({"configurable": {"thread_id": thread_id}})
                     messages = state.values.get("messages", [])
-                    if messages and hasattr(messages[-1], "tool_calls") and messages[-1].tool_calls:
-                        from langchain_core.messages import ToolMessage
-                        # Create dummy ToolMessages
-                        tool_messages = [
-                            ToolMessage(content="Action interrupted by user.", tool_call_id=tc["id"], name=tc["name"])
-                            for tc in messages[-1].tool_calls
-                        ]
-                        await session_agent_executor.aupdate_state(
-                            {"configurable": {"thread_id": thread_id}},
-                            {"messages": tool_messages}
-                        )
-                        logger.info("Successfully patched state with dummy ToolMessages. Retrying...")
+                    
+                    patched = False
+                    for msg in reversed(messages):
+                        if getattr(msg, "tool_calls", None):
+                            from langchain_core.messages import AIMessage
+                            # Overwrite the message to remove the dangling tool calls
+                            new_msg = AIMessage(
+                                content=msg.content or "[Action interrupted by user]", 
+                                id=msg.id,
+                                tool_calls=[]
+                            )
+                            await session_agent_executor.aupdate_state(
+                                {"configurable": {"thread_id": thread_id}},
+                                {"messages": [new_msg]}
+                            )
+                            logger.info(f"Successfully patched state by removing tool calls from message {msg.id}. Retrying...")
+                            patched = True
+                            await generate_ai_response(text)
+                            return
+                            
+                    if not patched:
+                        logger.warning("Could not find message with tool_calls to patch. Falling back to rotating thread_id.")
+                        thread_id = str(uuid4())
                         await generate_ai_response(text)
                         return
+                    
                 except Exception as patch_e:
                     logger.error(f"Failed to patch state: {patch_e}", exc_info=True)
-
-                logger.warning("Falling back to rotating thread_id.")
-                thread_id = str(uuid4())
-                await generate_ai_response(text)
+                    logger.warning("Falling back to rotating thread_id.")
+                    thread_id = str(uuid4())
+                    await generate_ai_response(text)
             else:
-                logger.error(f"AI response value error: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"AI response error: {e}", exc_info=True)
+                logger.error(f"AI response error: {e}", exc_info=True)
 
     def _in_grace_period() -> bool:
         """Check if we're still in the barge-in grace period."""

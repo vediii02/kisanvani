@@ -14,7 +14,7 @@ export default function SuperAdminCallAnalytics() {
 
   const fetchAnalytics = async () => {
     try {
-      const response = await api.get(`/superadmin-platform/call-analytics?range=${dateRange}`);
+      const response = await api.get(`/superadmin/call-analytics?range=${dateRange}`);
       setAnalytics(response.data);
     } catch (error) {
       console.error('Error fetching analytics:', error);
@@ -121,13 +121,13 @@ export default function SuperAdminCallAnalytics() {
               <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
                 <div
                   className="bg-gradient-to-r from-green-400 to-green-600 h-full flex items-center justify-end pr-2"
-                  style={{ width: `${(crop.count / analytics.total_calls) * 100}%` }}
+                  style={{ width: `${analytics.total_calls > 0 ? (crop.count / analytics.total_calls) * 100 : 0}%` }}
                 >
                   <span className="text-xs text-white font-bold">{crop.count}</span>
                 </div>
               </div>
               <div className="w-16 text-sm text-gray-600 text-right">
-                {Math.round((crop.count / analytics.total_calls) * 100)}%
+                {analytics.total_calls > 0 ? Math.round((crop.count / analytics.total_calls) * 100) : 0}%
               </div>
             </div>
           ))}
@@ -147,13 +147,13 @@ export default function SuperAdminCallAnalytics() {
               <div className="flex-1 bg-gray-200 rounded-full h-6 overflow-hidden">
                 <div
                   className="bg-gradient-to-r from-red-400 to-red-600 h-full flex items-center justify-end pr-2"
-                  style={{ width: `${(problem.count / analytics.total_calls) * 100}%` }}
+                  style={{ width: `${analytics.total_calls > 0 ? (problem.count / analytics.total_calls) * 100 : 0}%` }}
                 >
                   <span className="text-xs text-white font-bold">{problem.count}</span>
                 </div>
               </div>
               <div className="w-16 text-sm text-gray-600 text-right">
-                {Math.round((problem.count / analytics.total_calls) * 100)}%
+                {analytics.total_calls > 0 ? Math.round((problem.count / analytics.total_calls) * 100) : 0}%
               </div>
             </div>
           ))}
@@ -164,17 +164,20 @@ export default function SuperAdminCallAnalytics() {
       <Card className="p-6">
         <h3 className="text-xl font-bold mb-4">Calls by Hour of Day</h3>
         <div className="grid grid-cols-12 gap-2">
-          {analytics?.calls_by_hour?.map((hour, index) => (
-            <div key={index} className="flex flex-col items-center">
-              <div className="text-xs text-gray-500 mb-1">{hour.hour}h</div>
-              <div
-                className="w-full bg-gradient-to-t from-blue-500 to-blue-300 rounded-t"
-                style={{ height: `${(hour.count / Math.max(...analytics.calls_by_hour.map(h => h.count))) * 100}px` }}
-                title={`${hour.count} calls`}
-              ></div>
-              <div className="text-xs font-medium mt-1">{hour.count}</div>
-            </div>
-          ))}
+          {analytics?.calls_by_hour?.map((hour, index) => {
+            const maxCount = Math.max(...(analytics.calls_by_hour.map(h => h.count) || [0]), 1); // Avoid div by 0
+            return (
+              <div key={index} className="flex flex-col items-center">
+                <div className="text-xs text-gray-500 mb-1">{hour.hour}h</div>
+                <div
+                  className="w-full bg-gradient-to-t from-blue-500 to-blue-300 rounded-t"
+                  style={{ height: `${(hour.count / maxCount) * 100}px` }}
+                  title={`${hour.count} calls`}
+                ></div>
+                <div className="text-xs font-medium mt-1">{hour.count}</div>
+              </div>
+            );
+          })}
         </div>
       </Card>
 
@@ -189,7 +192,7 @@ export default function SuperAdminCallAnalytics() {
                 <p className="text-sm text-gray-600">{org.call_count} calls</p>
               </div>
               <div className="text-right">
-                <p className="font-bold text-lg">{Math.round((org.call_count / analytics.total_calls) * 100)}%</p>
+                <p className="font-bold text-lg">{analytics.total_calls > 0 ? Math.round((org.call_count / analytics.total_calls) * 100) : 0}%</p>
                 <p className="text-xs text-gray-500">of total</p>
               </div>
             </div>

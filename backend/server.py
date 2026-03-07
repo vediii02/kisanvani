@@ -307,6 +307,52 @@ async def exotel_ws_endpoint(websocket: WebSocket):
                                 phone_ctx_token = set_current_phone_number(from_number)
                                 logger.info(f"Phone number updated from Exotel: {from_number}")
                         
+                        try:
+                            from db.base import AsyncSessionLocal
+                            from db.models.call_session import CallSession, CallStatus
+                            from db.models.farmer import Farmer
+                            from datetime import datetime, timezone
+                            from sqlalchemy import select
+                            async with AsyncSessionLocal() as db:
+                                farmer_id = None
+                                if adapter.from_number:
+                                    phone_search = adapter.from_number[-10:] if len(adapter.from_number) >= 10 else adapter.from_number
+                                    farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
+                                    farmer_result = await db.execute(farmer_stmt)
+                                    farmer = farmer_result.scalars().first()
+                                    if farmer:
+                                        farmer_id = farmer.id
+                                    else:
+                                        new_farmer = Farmer(
+                                            phone_number=adapter.from_number,
+                                            name="Unknown Caller",
+                                            language="hi"
+                                        )
+                                        db.add(new_farmer)
+                                        await db.commit()
+                                        await db.refresh(new_farmer)
+                                        farmer_id = new_farmer.id
+                                        logger.info(f"Created new Farmer {farmer_id} for number {adapter.from_number}")
+
+                                new_call = CallSession(
+                                    session_id=adapter.call_sid or f"exotel_{datetime.now().timestamp()}",
+                                    phone_number=from_number or adapter.from_number or "Unknown",
+                                    provider_name="exotel",
+                                    provider_call_id=adapter.call_sid,
+                                    status=CallStatus.ACTIVE,
+                                    organisation_id=organisation_id,
+                                    from_phone=adapter.from_number,
+                                    to_phone=adapter.to_number,
+                                    exotel_call_sid=adapter.call_sid,
+                                    call_direction="inbound",
+                                    farmer_id=farmer_id
+                                )
+                                db.add(new_call)
+                                await db.commit()
+                                logger.info(f"Created CallSession for {adapter.call_sid} (Farmer ID: {farmer_id})")
+                        except Exception as e:
+                            logger.error(f"Error creating CallSession: {e}")
+                        
                         continue
 
                     if event == "stop":
@@ -348,6 +394,26 @@ async def exotel_ws_endpoint(websocket: WebSocket):
          reset_current_organisation_id(session_ctx_token)
          reset_current_company_id(company_ctx_token)
          reset_current_phone_number(phone_ctx_token)
+         
+         # Update CallSession to COMPLETED
+         try:
+             from db.base import AsyncSessionLocal
+             from db.models.call_session import CallSession, CallStatus
+             from sqlalchemy import select
+             from datetime import datetime, timezone
+             if adapter and adapter.call_sid:
+                 async with AsyncSessionLocal() as db:
+                     call_obj = (await db.execute(select(CallSession).where(CallSession.provider_call_id == adapter.call_sid))).scalar_one_or_none()
+                     if call_obj:
+                         call_obj.status = CallStatus.COMPLETED
+                         call_obj.end_time = datetime.now(timezone.utc)
+                         if call_obj.start_time:
+                             call_obj.duration_seconds = int((call_obj.end_time - call_obj.start_time).total_seconds())
+                         await db.commit()
+                         logger.info(f"Updated CallSession {adapter.call_sid} to COMPLETED")
+         except Exception as e:
+             logger.error(f"Error updating CallSession status: {e}")
+
          try:
              await websocket.close()
          except RuntimeError:
