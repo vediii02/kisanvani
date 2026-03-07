@@ -151,7 +151,8 @@ export default function OrganisationProfile() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            <User className="h-8 w-8 text-primary" />
             Organisation Profile
           </h1>
           <p className="text-muted-foreground mt-1">

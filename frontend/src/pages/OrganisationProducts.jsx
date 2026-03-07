@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Package, Plus, Edit2, Trash2, Search, Filter, AlertCircle, X, Upload, Download, FileText } from 'lucide-react';
 import api from '../api/api';
+import { Badge } from '@/components/ui/badge';
 
 // Category and Sub-category mapping
 const CATEGORY_OPTIONS = {
@@ -313,9 +314,12 @@ const OrganisationProducts = () => {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Products Management</h1>
-          <p className="text-gray-600 mt-1">Manage your organisation's products</p>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <Package className="w-8 h-8 text-primary" />
+            Products Management
+          </h1>
+          <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{products.length} Total Products</Badge>
         </div>
         <div className="flex gap-3">
           <button

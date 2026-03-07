@@ -15,7 +15,8 @@ import {
   BarChart3,
   Calendar,
   Eye,
-  Loader2
+  Loader2,
+  LayoutDashboard
 } from 'lucide-react';
 import api, { superAdminAPI } from '../api/api';
 
@@ -160,7 +161,7 @@ export default function SuperAdminDashboard() {
       subtitle: 'Active Right Now',
       icon: Activity,
       gradient: 'from-red-400 to-red-600',
-      action: () => navigate('/superadmin/live-calls'),
+      action: null,
       pulse: (kpis?.live_calls_count || 0) > 0
     },
     {
@@ -191,7 +192,10 @@ export default function SuperAdminDashboard() {
               <Shield className="h-8 w-8 text-white" />
             </div>
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 tracking-tight">Super Admin Platform</h1>
+              <h1 className="text-4xl font-bold flex items-center gap-2 text-gray-900 tracking-tight">
+                <LayoutDashboard className="h-10 w-10 text-primary" />
+                Super Admin Platform
+              </h1>
               <p className="text-gray-600 mt-1 text-lg">National-scale Multi-tenant SaaS Control Center</p>
             </div>
           </div>
@@ -205,11 +209,11 @@ export default function SuperAdminDashboard() {
             </div>
           )}
           <button
-            onClick={() => navigate('/superadmin/audit-logs')}
+            onClick={() => navigate('/superadmin/call-logs')}
             className="flex items-center gap-2 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 shadow-md transition-all font-medium"
           >
             <BarChart3 className="h-4 w-4" />
-            Audit Logs
+            Call Logs
           </button>
         </div>
       </div>

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Package, Tag, Phone, TrendingUp, Users, BarChart } from 'lucide-react';
+import { Package, Tag, Phone, TrendingUp, Users, BarChart, LayoutDashboard } from 'lucide-react';
 import api from '@/api/api';
 import { toast } from 'sonner';
 
@@ -159,9 +159,12 @@ export default function CompanyDashboard() {
     <div className="p-6 space-y-8 bg-white min-h-screen">
       {/* Header */}
       <div className="flex flex-col gap-1">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Company Dashboard</h1>
+        <h1 className="text-3xl font-bold flex items-center gap-2 text-slate-900 tracking-tight">
+          <LayoutDashboard className="w-8 h-8 text-primary" />
+          Company Dashboard
+        </h1>
         <p className="text-slate-500 font-medium tracking-tight">
-          Welcome back, {user?.full_name || user?.username}
+          Welcome back, {user?.username}!
         </p>
       </div>
 

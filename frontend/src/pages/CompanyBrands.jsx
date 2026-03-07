@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tag, Plus, Edit2, Trash2, Search, AlertCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/utils';
 import api from '@/api/api';
@@ -152,12 +153,12 @@ export default function CompanyBrands() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Tag className="w-8 h-8 text-primary" />
             My Brands
           </h1>
-          <p className="text-muted-foreground mt-1">Manage your company brands</p>
+          <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{brands.length} Total Brands</Badge>
         </div>
         <Button onClick={openCreateModal} className="gap-2">
           <Plus className="w-4 h-4" />
@@ -215,11 +216,11 @@ export default function CompanyBrands() {
                   </div>
                 </div>
               </div>
-              
+
               {brand.description && (
                 <p className="text-sm text-muted-foreground mb-4">{brand.description}</p>
               )}
-              
+
               <div className="flex gap-2 pt-4 border-t">
                 <Button
                   variant="outline"

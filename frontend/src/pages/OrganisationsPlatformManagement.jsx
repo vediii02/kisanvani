@@ -22,6 +22,7 @@ import {
   Globe
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -224,8 +225,10 @@ export default function OrganisationsPlatformManagement() {
             <Building2 className="h-8 w-8 text-primary" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-gray-900">Organisation Management</h1>
-            <p className="text-muted-foreground mt-1">Manage all platform tenants and their resources</p>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-bold tracking-tight text-gray-900">Organisation Management</h1>
+              <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{organisations.length} Total Organisations</Badge>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -301,7 +304,7 @@ export default function OrganisationsPlatformManagement() {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50/50">
               <tr>
-                <th className="px-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                <th className="x-6 py-4 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">
                   Organisation
                 </th>
                 <th className="px-6 py-4 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">

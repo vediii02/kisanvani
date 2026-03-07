@@ -43,7 +43,7 @@ export default function Sidebar() {
     { path: '/superadmin/ai-management', icon: Brain, label: 'AI Management', testid: 'nav-admin-ai' },
 
     // { path: '/superadmin/product-safety', icon: AlertTriangle, label: 'Product Safety', testid: 'nav-admin-safety' },
-    { path: '/superadmin/audit-logs', icon: FileText, label: 'Audit Logs', testid: 'nav-admin-audit' },
+    { path: '/superadmin/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-admin-audit' },
     // { path: '/superadmin/kb-governance', icon: Database, label: 'KB Governance', testid: 'nav-admin-kb' },
     { path: '/superadmin/settings', icon: Settings, label: 'Settings', testid: 'nav-admin-settings' },
   ];
@@ -54,6 +54,7 @@ export default function Sidebar() {
     { path: '/organisation/companies', icon: Building2, label: 'Companies', testid: 'nav-org-companies' },
     { path: '/organisation/brands', icon: Tag, label: 'Brands', testid: 'nav-org-brands' },
     { path: '/organisation/products', icon: Package, label: 'Products', testid: 'nav-org-products' },
+    { path: '/organisation/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-org-calls' },
     { path: '/organisation/profile', icon: User, label: 'Profile', testid: 'nav-org-profile' },
     { path: '/organisation/settings', icon: Settings, label: 'Settings', testid: 'nav-org-settings' },
   ];
@@ -62,6 +63,7 @@ export default function Sidebar() {
     { path: '/company/dashboard', icon: LayoutDashboard, label: 'Dashboard', testid: 'nav-company-dashboard' },
     { path: '/company/brands', icon: Tag, label: 'My Brands', testid: 'nav-company-brands' },
     { path: '/company/products', icon: Package, label: 'My Products', testid: 'nav-company-products' },
+    { path: '/company/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-company-calls' },
     { path: '/company/profile', icon: User, label: 'Profile', testid: 'nav-company-profile' },
     { path: '/company/settings', icon: Settings, label: 'Settings', testid: 'nav-company-settings' },
   ];

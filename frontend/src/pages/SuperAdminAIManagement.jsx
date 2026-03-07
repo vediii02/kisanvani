@@ -98,10 +98,10 @@ export default function SuperAdminAIManagement() {
     <div className="space-y-6 p-6 max-w-5xl">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-            <Brain className="h-8 w-8 text-purple-600" />
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Brain className="h-8 w-8 text-primary" />
             AI Management
-          </h2>
+          </h1>
           <p className="text-muted-foreground mt-2">Configure AI models, RAG settings, and system behavior</p>
         </div>
         <Button onClick={handleSave} disabled={saving} className="flex items-center gap-2">

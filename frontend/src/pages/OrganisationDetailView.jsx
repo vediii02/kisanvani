@@ -6,17 +6,22 @@ import {
   Phone,
   Package,
   TrendingUp,
-  Database,
   PhoneCall,
   Shield,
   ArrowLeft,
   AlertTriangle,
   CheckCircle,
-  Users,
-  Activity
+  Mail,
+  MapPin,
+  Globe,
+  Calendar,
+  User,
+  Briefcase,
+  Hash,
+  Crown,
+  Store
 } from 'lucide-react';
 import api from '../api/api';
-import WebsiteProductImporter from '../components/WebsiteProductImporter';
 
 const OrganisationDetailView = () => {
   const { orgId } = useParams();
@@ -25,6 +30,7 @@ const OrganisationDetailView = () => {
   const [organisation, setOrganisation] = useState(null);
   const [brands, setBrands] = useState([]);
   const [products, setProducts] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [phoneNumbers, setPhoneNumbers] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,21 +46,18 @@ const OrganisationDetailView = () => {
       const org = statsResponse.data.find(o => o.id === parseInt(orgId));
       setOrganisation(org);
 
-      // Fetch brands
-      const brandsResponse = await api.get(`/organisations/${orgId}/brands`);
-      setBrands(brandsResponse.data);
+      // Fetch all data in parallel
+      const [brandsRes, productsRes, companiesRes, phonesRes] = await Promise.allSettled([
+        api.get(`/organisations/${orgId}/brands`),
+        api.get(`/superadmin/organisations/${orgId}/products`),
+        api.get(`/admin/companies?organisation_id=${orgId}`),
+        api.get(`/superadmin/organisations/${orgId}/phone-numbers`),
+      ]);
 
-      // Fetch all products for this org
-      const allProducts = [];
-      for (const brand of brandsResponse.data) {
-        const productsResponse = await api.get(`/brands/${brand.id}/products`);
-        allProducts.push(...productsResponse.data.map(p => ({ ...p, brand_name: brand.name })));
-      }
-      setProducts(allProducts);
-
-      // Fetch phone numbers
-      const phonesResponse = await api.get(`/superadmin/organisations/${orgId}/phone-numbers`);
-      setPhoneNumbers(phonesResponse.data);
+      setBrands(brandsRes.status === 'fulfilled' ? brandsRes.value.data : []);
+      setProducts(productsRes.status === 'fulfilled' ? productsRes.value.data : []);
+      setCompanies(companiesRes.status === 'fulfilled' ? companiesRes.value.data || [] : []);
+      setPhoneNumbers(phonesRes.status === 'fulfilled' ? phonesRes.value.data : []);
     } catch (error) {
       console.error('Error fetching organisation details:', error);
     } finally {
@@ -77,30 +80,6 @@ const OrganisationDetailView = () => {
     } catch (error) {
       console.error('Error toggling status:', error);
       alert('Failed to update status');
-    }
-  };
-
-  const banProductGlobally = async (product) => {
-    const reason = window.prompt(
-      `🚨 BAN PRODUCT GLOBALLY:\n\nProduct: ${product.name}\nCompany: ${product.brand_name}\n\nThis will block AI from suggesting this product to ANY organisation.\n\nEnter ban reason (regulatory/safety):`,
-      'Safety concern - under investigation'
-    );
-
-    if (!reason) return;
-
-    try {
-      await api.post('/superadmin/banned-products', {
-        product_name: product.name,
-        chemical_name: product.chemical_name || '',
-        ban_reason: reason,
-        regulatory_reference: '',
-        expiry_date: null
-      });
-      alert(`✅ Product "${product.name}" banned globally!\n\nAI will no longer suggest this product to any organisation.`);
-      fetchOrganisationDetails();
-    } catch (error) {
-      console.error('Error banning product:', error);
-      alert('Failed to ban product');
     }
   };
 
@@ -130,6 +109,24 @@ const OrganisationDetailView = () => {
       </div>
     );
   }
+
+  const tabs = [
+    { id: 'overview', label: 'Overview', icon: Building2 },
+    { id: 'companies', label: `Companies (${organisation.company_count || companies.length || 0})`, icon: Store },
+    { id: 'brands', label: `Brands (${organisation.brand_count || 0})`, icon: Package },
+    { id: 'products', label: `Products (${organisation.product_count || 0})`, icon: TrendingUp },
+    { id: 'phones', label: `Phone Numbers (${organisation.phone_count || 0})`, icon: Phone },
+  ];
+
+  const DetailItem = ({ icon: Icon, label, value, color = 'text-gray-900' }) => (
+    <div className="flex flex-col gap-1.5 transition-all hover:translate-x-1">
+      <div className="flex items-center gap-2 group">
+        {Icon && <Icon className="h-4 w-4 text-indigo-400 group-hover:text-indigo-600 transition-colors" />}
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">{label}</p>
+      </div>
+      <p className={`text-base font-bold tracking-tight ${color}`}>{value || '—'}</p>
+    </div>
+  );
 
   return (
     <div className="p-6 space-y-6 bg-gray-50 min-h-screen">
@@ -181,7 +178,17 @@ const OrganisationDetailView = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="bg-white rounded-lg shadow p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-gray-600 text-sm">Companies</p>
+              <p className="text-3xl font-bold text-orange-600">{organisation.company_count || companies.length || 0}</p>
+            </div>
+            <Store className="h-10 w-10 text-orange-500" />
+          </div>
+        </div>
+
         <div className="bg-white rounded-lg shadow p-4">
           <div className="flex items-center justify-between">
             <div>
@@ -225,17 +232,12 @@ const OrganisationDetailView = () => {
 
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div className="flex border-b border-gray-200">
-          {[
-            { id: 'overview', label: 'Overview', icon: Building2 },
-            { id: 'import', label: 'Import Products', icon: Database },
-            { id: 'phones', label: 'Phone Numbers', icon: Phone },
-            { id: 'brands', label: 'Brands', icon: Package },
-          ].map(tab => (
+        <div className="flex border-b border-gray-200 overflow-x-auto">
+          {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-6 py-4 font-medium transition-all ${activeTab === tab.id
+              className={`flex items-center gap-2 px-6 py-4 font-medium transition-all whitespace-nowrap ${activeTab === tab.id
                 ? 'border-b-4 border-indigo-600 text-indigo-600 bg-indigo-50'
                 : 'text-gray-600 hover:bg-gray-50'
                 }`}
@@ -247,30 +249,98 @@ const OrganisationDetailView = () => {
         </div>
 
         <div className="p-6">
-          {/* Overview Tab */}
+          {/* ==================== OVERVIEW TAB ==================== */}
           {activeTab === 'overview' && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600 mb-1">Organisation Name</p>
-                  <p className="text-lg font-bold text-gray-900">{organisation.name}</p>
+            <div className="space-y-10 py-4">
+              {/* Basic Information */}
+              <div className="relative">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-indigo-50 rounded-lg">
+                    <Building2 className="h-5 w-5 text-indigo-600" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tighter uppercase">Basic Information</h3>
+                  <div className="h-px flex-1 bg-gradient-to-r from-indigo-100 to-transparent"></div>
                 </div>
-                <div className="p-4 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-600 mb-1">Status</p>
-                  <p className={`text-lg font-bold ${organisation.is_active ? 'text-green-600' : 'text-red-600'}`}>
-                    {organisation.is_active ? 'Active' : 'Inactive'}
-                  </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-y-8 gap-x-12 px-2">
+                  <DetailItem icon={Building2} label="Organisation Name" value={organisation.name} />
+                  <DetailItem
+                    icon={CheckCircle}
+                    label="Status"
+                    value={organisation.is_active ? 'Active' : 'Inactive'}
+                    color={organisation.is_active ? 'text-emerald-600' : 'text-rose-600'}
+                  />
+                  <DetailItem icon={Crown} label="Plan Type" value={organisation.plan_type?.charAt(0).toUpperCase() + organisation.plan_type?.slice(1)} />
                 </div>
               </div>
 
-              <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded">
-                <div className="flex items-start gap-3">
-                  <Shield className="h-6 w-6 text-blue-600 mt-1" />
+              {/* Contact Information */}
+              <div>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-blue-50 rounded-lg">
+                    <Mail className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tighter uppercase">Contact Information</h3>
+                  <div className="h-px flex-1 bg-gradient-to-r from-blue-100 to-transparent"></div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-3 gap-y-8 gap-x-12 px-2">
+                  <DetailItem icon={Mail} label="Email" value={organisation.email} />
+                  <DetailItem icon={Phone} label="Primary Phone" value={organisation.phone_numbers} />
+                  <DetailItem icon={Phone} label="Secondary Phone" value={organisation.secondary_phone} />
+                  <DetailItem icon={Globe} label="Website" value={organisation.website_url} />
+                  <DetailItem icon={User} label="Admin Username" value={organisation.admin_username} />
+                  <DetailItem icon={Calendar} label="Created At" value={organisation.created_at ? new Date(organisation.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : null} />
+                </div>
+              </div>
+
+              {/* Address */}
+              <div>
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="p-2 bg-emerald-50 rounded-lg">
+                    <MapPin className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900 tracking-tighter uppercase">Address Details</h3>
+                  <div className="h-px flex-1 bg-gradient-to-r from-emerald-100 to-transparent"></div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-y-8 gap-x-12 px-2">
+                  <div className="md:col-span-2">
+                    <DetailItem icon={MapPin} label="Street Address" value={organisation.address} />
+                  </div>
+                  <DetailItem icon={MapPin} label="City" value={organisation.city} />
+                  <DetailItem icon={MapPin} label="State" value={organisation.state} />
+                  <DetailItem icon={Hash} label="Pincode" value={organisation.pincode} />
+                </div>
+              </div>
+
+              {/* Description */}
+              {organisation.description && (
+                <div>
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 bg-amber-50 rounded-lg">
+                      <Briefcase className="h-5 w-5 text-amber-600" />
+                    </div>
+                    <h3 className="text-xl font-black text-slate-900 tracking-tighter uppercase">Description</h3>
+                    <div className="h-px flex-1 bg-gradient-to-r from-amber-100 to-transparent"></div>
+                  </div>
+                  <div className="px-2">
+                    <p className="text-slate-600 font-medium leading-relaxed italic">{organisation.description}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Governance Notice */}
+              <div className="bg-slate-900 rounded-2xl p-6 shadow-xl relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform duration-500">
+                  <Shield className="h-24 w-24 text-white" />
+                </div>
+                <div className="flex items-start gap-4 relative z-10">
+                  <div className="p-2 bg-indigo-500 rounded-lg shadow-lg">
+                    <Shield className="h-6 w-6 text-white" />
+                  </div>
                   <div>
-                    <h4 className="font-bold text-blue-900 mb-1">Governance Mode</h4>
-                    <p className="text-blue-800 text-sm">
-                      As Super Admin, you have read-only visibility with critical safety controls.
-                      You can manage brands and phone numbers, or inactivate the entire organisation if needed.
+                    <h4 className="font-black text-white text-lg uppercase tracking-tight mb-2">Governance Mode Active</h4>
+                    <p className="text-slate-400 text-sm font-medium max-w-2xl leading-relaxed">
+                      As Super Admin, you have full read-only visibility with critical safety controls.
+                      You can manage brands and phone numbers, or inactivate the entire organisation if needed for compliance.
                     </p>
                   </div>
                 </div>
@@ -278,63 +348,77 @@ const OrganisationDetailView = () => {
             </div>
           )}
 
-          {/* Import Products Tab */}
-          {activeTab === 'import' && (
+          {/* ==================== COMPANIES TAB ==================== */}
+          {activeTab === 'companies' && (
             <div>
-              <WebsiteProductImporter
-                organisationId={orgId}
-                onImportComplete={() => {
-                  // Refresh organisation details after import
-                  fetchOrganisationDetails();
-                }}
-              />
-            </div>
-          )}
-
-          {/* Phone Numbers Tab */}
-          {activeTab === 'phones' && (
-            <div>
-              <h3 className="text-lg font-bold mb-4">Phone Numbers ({phoneNumbers.length})</h3>
-              {phoneNumbers.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No phone numbers configured</p>
+              <h3 className="text-lg font-bold mb-4">Companies ({companies.length})</h3>
+              {companies.length === 0 ? (
+                <div className="text-center py-12">
+                  <Store className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-lg">No companies under this organisation</p>
+                </div>
               ) : (
-                <table className="min-w-full">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Phone Number</th>
-                      <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {phoneNumbers.map(phone => (
-                      <tr key={phone.id}>
-                        <td className="px-4 py-3 font-mono">{phone.phone_number}</td>
-                        <td className="px-4 py-3 text-center">
-                          {phone.is_active ? (
-                            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded">Active</span>
-                          ) : (
-                            <span className="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-semibold rounded">Inactive</span>
-                          )}
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Company Name</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Contact Person</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Email</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Phone</th>
+                        <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Brands</th>
+                        <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Products</th>
+                        <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {companies.map(company => (
+                        <tr key={company.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <Store className="h-5 w-5 text-orange-500" />
+                              <span className="font-medium">{company.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{company.contact_person || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{company.email || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{company.phone || '—'}</td>
+                          <td className="px-4 py-3 text-center font-semibold">{company.brand_count || 0}</td>
+                          <td className="px-4 py-3 text-center font-semibold">{company.product_count || 0}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-1 text-xs font-semibold rounded ${company.status === 'active'
+                              ? 'bg-green-100 text-green-800'
+                              : company.status === 'pending'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-gray-100 text-gray-800'
+                              }`}>
+                              {company.status?.charAt(0).toUpperCase() + company.status?.slice(1)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           )}
 
-          {/* Brands Tab */}
+          {/* ==================== BRANDS TAB ==================== */}
           {activeTab === 'brands' && (
             <div>
               <h3 className="text-lg font-bold mb-4">Brands ({brands.length}) - View Only</h3>
               {brands.length === 0 ? (
-                <p className="text-gray-500 text-center py-8">No brands registered</p>
+                <div className="text-center py-12">
+                  <Package className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-lg">No brands registered</p>
+                </div>
               ) : (
                 <table className="min-w-full">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Brand Name</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Company Name</th>
                       <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Products</th>
                       <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Status</th>
                     </tr>
@@ -347,6 +431,9 @@ const OrganisationDetailView = () => {
                             <Package className="h-5 w-5 text-purple-500" />
                             <span className="font-medium">{brand.name}</span>
                           </div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-600">
+                          {brand.company_name || '—'}
                         </td>
                         <td className="px-4 py-3 text-center">
                           {products.filter(p => p.brand_name === brand.name).length}
@@ -362,6 +449,95 @@ const OrganisationDetailView = () => {
             </div>
           )}
 
+          {/* ==================== PRODUCTS TAB ==================== */}
+          {activeTab === 'products' && (
+            <div>
+              <h3 className="text-lg font-bold mb-4">Products ({products.length}) - View Only</h3>
+              {products.length === 0 ? (
+                <div className="text-center py-12">
+                  <TrendingUp className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-lg">No products registered</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Product Name</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Brand</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Category</th>
+                        <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Price</th>
+                        <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {products.map(product => (
+                        <tr key={product.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className="h-4 w-4 text-green-500" />
+                              <span className="font-medium">{product.name}</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-gray-600">{product.brand_name || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{product.category || '—'}</td>
+                          <td className="px-4 py-3 text-gray-600">{product.price ? `₹${product.price}` : product.price_range || '—'}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-1 text-xs font-semibold rounded ${product.is_active
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                              }`}>
+                              {product.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ==================== PHONE NUMBERS TAB ==================== */}
+          {activeTab === 'phones' && (
+            <div>
+              <h3 className="text-lg font-bold mb-4">Phone Numbers ({phoneNumbers.length})</h3>
+              {phoneNumbers.length === 0 ? (
+                <div className="text-center py-12">
+                  <Phone className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <p className="text-gray-500 text-lg">No phone numbers configured</p>
+                </div>
+              ) : (
+                <table className="min-w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Phone Number</th>
+                      <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Channel</th>
+                      <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Region</th>
+                      <th className="px-4 py-3 text-center text-sm font-medium text-gray-600">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {phoneNumbers.map(phone => (
+                      <tr key={phone.id}>
+                        <td className="px-4 py-3 font-mono">{phone.phone_number}</td>
+                        <td className="px-4 py-3 text-center text-gray-600">{phone.channel || '—'}</td>
+                        <td className="px-4 py-3 text-center text-gray-600">{phone.region || '—'}</td>
+                        <td className="px-4 py-3 text-center">
+                          {phone.status === 'active' ? (
+                            <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-semibold rounded">Active</span>
+                          ) : (
+                            <span className="px-2 py-1 bg-gray-100 text-gray-800 text-xs font-semibold rounded">{phone.status || 'Inactive'}</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )}
 
         </div>
       </div>

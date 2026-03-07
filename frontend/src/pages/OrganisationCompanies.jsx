@@ -9,6 +9,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Building2, Plus, Edit2, Trash2, Search, Phone, Mail, MapPin, Users, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/api/api';
+import { Badge } from '@/components/ui/badge';
 
 export default function OrganisationCompanies() {
   const [companies, setCompanies] = useState([]);
@@ -227,12 +228,12 @@ export default function OrganisationCompanies() {
     <div className="container mx-auto p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <Building2 className="w-8 h-8 text-primary" />
             Companies Management
           </h1>
-          <p className="text-muted-foreground mt-1">Manage companies in your organisation</p>
+          <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{companies.length} Total Companies</Badge>
         </div>
         <Button onClick={openCreateModal} className="gap-2">
           <Plus className="w-4 h-4" />

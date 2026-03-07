@@ -12,6 +12,7 @@ import {
   Search,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 
 // Category and Sub-category mapping
 const CATEGORY_OPTIONS = {
@@ -415,13 +416,12 @@ export default function CompanyProductsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">
+      <div className="flex items-center gap-3">
+        <h1 className="text-3xl font-bold flex items-center gap-2">
+          <Package className="w-8 h-8 text-primary" />
           Products Management
         </h1>
-        <p className="text-gray-600 mt-1">
-          Manage your company's products
-        </p>
+        <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{products.length} Total Products</Badge>
       </div>
 
       {/* Top Buttons */}

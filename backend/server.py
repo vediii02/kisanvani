@@ -16,7 +16,8 @@ from api.routes import superadmin_platform, admin_organisations, admin_companies
 from api.routes import pending_approvals  
 from api.routes import organisation_pending_approvals 
 from api.routes import company_profile 
-from api.routes import company_brands  
+from api.routes import company_brands
+from api.routes import company_calls 
 from api.routes.organisations import brand_router, product_router
 from api.routes import exotel  
 
@@ -115,6 +116,7 @@ app.include_router(brand_router, prefix="/api")
 app.include_router(product_router, prefix="/api")
 app.include_router(company_profile.router, prefix="/api/company", tags=["Company Profile"])
 app.include_router(company_brands.router, prefix="/api/company", tags=["Company Brands"])
+app.include_router(company_calls.router, prefix="/api/company", tags=["Company Calls"])
 app.include_router(exotel.router, prefix="/api/exotel", tags=["Exotel Setup"])
 
 

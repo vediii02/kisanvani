@@ -76,14 +76,12 @@ const OrganisationSettings = () => {
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex items-center gap-4">
-                <div className="p-3 bg-slate-100 rounded-xl border border-slate-200 shadow-sm">
-                    <Settings className="h-8 w-8 text-slate-600" />
-                </div>
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900">Organisation Settings</h1>
-                    <p className="text-gray-600 mt-1">Manage your organisation account and security preferences</p>
-                </div>
+            <div>
+                <h1 className="text-3xl font-bold flex items-center gap-2">
+                    <Settings className="h-8 w-8 text-primary" />
+                    Organisation Settings
+                </h1>
+                <p className="text-gray-600 mt-1">Manage your organisation account and security preferences</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

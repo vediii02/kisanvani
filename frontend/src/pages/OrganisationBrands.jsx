@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Tag, Plus, Edit2, Trash2, Search, AlertCircle, Check, X } from 'lucide-react';
 import api from '../api/api';
+import { Badge } from '@/components/ui/badge';
 
 const OrganisationBrands = () => {
   const navigate = useNavigate();
@@ -101,9 +102,12 @@ const OrganisationBrands = () => {
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Brands Management</h1>
-          <p className="text-gray-600 mt-1">Manage your organisation's brands</p>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <Tag className="w-8 h-8 text-primary" />
+            Brands Management
+          </h1>
+          <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{brands.length} Total Brands</Badge>
         </div>
         <button
           onClick={() => {

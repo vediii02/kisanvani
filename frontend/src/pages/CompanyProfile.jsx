@@ -15,7 +15,7 @@ export default function CompanyProfile() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  
+
   const [companyData, setCompanyData] = useState({
     name: '',
     business_type: '',
@@ -44,13 +44,13 @@ export default function CompanyProfile() {
   const fetchCompanyProfile = async () => {
     try {
       setLoading(true);
-      
+
       console.log('Fetching company profile...');
       const response = await api.get('/company/profile');
       console.log('API Response:', response);
       const profileData = response.data;
       console.log('Profile Data:', profileData);
-      
+
       const newCompanyData = {
         name: profileData.name || '',
         business_type: profileData.business_type || '',
@@ -69,11 +69,11 @@ export default function CompanyProfile() {
         description: profileData.description || '',
         status: profileData.status || 'active'
       };
-      
+
       console.log('Setting companyData to:', newCompanyData);
       setCompanyData(newCompanyData);
       setOriginalData(newCompanyData);
-      
+
     } catch (error) {
       console.error('Error fetching company profile:', error);
       console.error('Error response:', error.response);
@@ -105,7 +105,7 @@ export default function CompanyProfile() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      
+
       // Prepare data for API - map frontend fields to backend fields
       const updateData = {
         name: companyData.name,
@@ -125,10 +125,10 @@ export default function CompanyProfile() {
         description: companyData.description,
         notes: companyData.notes
       };
-      
+
       // Call the actual API
       const response = await api.put('/company/profile', updateData);
-      
+
       // Update local state with response data
       const updatedProfile = response.data;
       setCompanyData({
@@ -149,7 +149,7 @@ export default function CompanyProfile() {
         description: updatedProfile.description || '',
         status: updatedProfile.status || 'active'
       });
-      
+
       setOriginalData({
         name: updatedProfile.name || '',
         business_type: updatedProfile.business_type || '',
@@ -168,10 +168,10 @@ export default function CompanyProfile() {
         description: updatedProfile.description || '',
         status: updatedProfile.status || 'active'
       });
-      
+
       setEditing(false);
       toast.success('Company profile updated successfully!');
-      
+
     } catch (error) {
       console.error('Error updating company profile:', error);
       toast.error(error.response?.data?.detail || 'Failed to update company profile');
@@ -198,7 +198,10 @@ export default function CompanyProfile() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Company Profile</h1>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <User className="h-8 w-8 text-primary" />
+            Company Profile
+          </h1>
           <p className="text-muted-foreground mt-1">
             Manage your company information and details
           </p>
@@ -238,7 +241,7 @@ export default function CompanyProfile() {
 
       {/* Status Badge */}
       <div className="mb-6">
-        <Badge 
+        <Badge
           variant={companyData.status === 'active' ? 'default' : 'secondary'}
           className="text-sm"
         >
@@ -270,7 +273,7 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="business_type">Business Type</Label>
               <Input
@@ -281,7 +284,7 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="brand_name">Brand Name</Label>
               <Input
@@ -292,7 +295,7 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="website">Website</Label>
               <Input
@@ -329,18 +332,19 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="phone">Phone Number</Label>
               <Input
                 id="phone"
+                placeholder="+919876543210"
                 value={companyData.phone}
                 onChange={(e) => handleInputChange('phone', e.target.value)}
                 disabled={!editing}
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="alternate_phone">Alternate Phone Number</Label>
               <Input
@@ -352,7 +356,7 @@ export default function CompanyProfile() {
                 placeholder="+91 98765 43211"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="email">Email Address</Label>
               <Input
@@ -364,7 +368,7 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="address">Address</Label>
               <Textarea
@@ -376,7 +380,7 @@ export default function CompanyProfile() {
                 rows={3}
               />
             </div>
-            
+
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <Label htmlFor="city">City</Label>
@@ -389,7 +393,7 @@ export default function CompanyProfile() {
                   placeholder="Mumbai"
                 />
               </div>
-              
+
               <div>
                 <Label htmlFor="state">State</Label>
                 <Input
@@ -401,7 +405,7 @@ export default function CompanyProfile() {
                   placeholder="Maharashtra"
                 />
               </div>
-              
+
               <div>
                 <Label htmlFor="pincode">Pincode</Label>
                 <Input
@@ -426,7 +430,7 @@ export default function CompanyProfile() {
               Legal Information
             </CardTitle>
             <CardDescription>
-              Company registration and tax details 
+              Company registration and tax details
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -441,7 +445,7 @@ export default function CompanyProfile() {
                 placeholder="27AAAPL1234C1ZV"
               />
             </div>
-            
+
             <div>
               <Label htmlFor="registration_number">Registration Number</Label>
               <Input

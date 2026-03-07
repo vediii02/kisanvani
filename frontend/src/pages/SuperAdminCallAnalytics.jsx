@@ -70,7 +70,10 @@ export default function SuperAdminCallAnalytics() {
     <div className="space-y-6 p-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Call Analytics</h2>
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <BarChart3 className="h-8 w-8 text-primary" />
+            Call Analytics
+          </h1>
           <p className="text-muted-foreground mt-2">Platform-wide call metrics and insights</p>
         </div>
         <select

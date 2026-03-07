@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Building2, Tag, Package, Users, TrendingUp, BarChart, Phone } from 'lucide-react';
+import { Building2, Tag, Package, Users, TrendingUp, BarChart, Phone, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import api from '@/api/api';
@@ -123,7 +123,10 @@ export default function OrganisationDashboard() {
     <div className="space-y-8 p-6 bg-white min-h-screen">
       {/* Header */}
       <div className="flex flex-col gap-1">
-        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Organisation Dashboard</h1>
+        <h1 className="text-3xl font-bold flex items-center gap-2">
+          <LayoutDashboard className="w-8 h-8 text-primary" />
+          Organisation Dashboard
+        </h1>
         <p className="text-slate-500 font-medium tracking-tight">Welcome back, {user?.username}!</p>
       </div>
 

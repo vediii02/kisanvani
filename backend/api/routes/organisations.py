@@ -97,6 +97,7 @@ class BrandResponse(BaseModel):
     name: str
     organisation_id: int
     company_id: Optional[int] = None
+    company_name: Optional[str] = None
     description: Optional[str] = None
     logo_url: Optional[str] = None
     is_active: bool = True
@@ -555,20 +556,29 @@ async def get_organisation_brands(
     )
     brands = result.scalars().all()
     
-    return [
-        BrandResponse(
+    brand_responses = []
+    from db.models.company import Company
+    
+    for brand in brands:
+        company_name = None
+        if brand.company_id:
+            company_result = await db.execute(select(Company.name).where(Company.id == brand.company_id))
+            company_name = company_result.scalar()
+            
+        brand_responses.append(BrandResponse(
             id=brand.id,
             name=brand.name,
             organisation_id=brand.organisation_id,
             company_id=brand.company_id,
+            company_name=company_name,
             description=brand.description,
             logo_url=brand.logo_url,
             is_active=brand.is_active,
             created_at=brand.created_at.isoformat() if brand.created_at else "",
             product_count=0 # Placeholder, can be calculated if needed
-        )
-        for brand in brands
-    ]
+        ))
+    
+    return brand_responses
 
 @router.post("/{org_id}/brands", response_model=BrandResponse)
 async def create_brand(

@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye, UserPlus, Ban } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye, UserPlus, Ban, UserCheck } from 'lucide-react';
 import api from '@/api/api';
 
 export default function OrganisationPendingApprovals() {
@@ -173,7 +173,7 @@ export default function OrganisationPendingApprovals() {
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-          <Clock className="h-8 w-8" />
+          <UserCheck className="h-8 w-8 text-primary" />
           Pending Approvals
         </h1>
         <p className="text-muted-foreground mt-1">

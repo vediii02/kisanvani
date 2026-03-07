@@ -421,7 +421,13 @@ export default function ProductManagement() {
     <div className="container mx-auto py-6">
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Product Management</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+              <Package className="h-8 w-8 text-primary" />
+              Product Management
+            </h1>
+            <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{products.length} Total Products</Badge>
+          </div>
           <p className="text-muted-foreground mt-1">
             Manage agricultural products and solutions
           </p>

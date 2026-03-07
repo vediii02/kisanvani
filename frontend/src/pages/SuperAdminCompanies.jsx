@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Loader2, Building2, Search, Edit, Trash2, Plus, Package, Phone, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -194,7 +195,13 @@ export default function SuperAdminCompanies() {
     <div className="space-y-6 p-6">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold tracking-tight">Companies Management</h2>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+              <Building2 className="h-8 w-8 text-primary" />
+              Companies Management
+            </h1>
+            <Badge variant="secondary" className="mt-1 bg-purple-100 text-purple-700">{companies.length} Total Companies</Badge>
+          </div>
           <p className="text-muted-foreground mt-2">View and manage all companies across organisations</p>
         </div>
         <Button onClick={() => setShowModal(true)} className="flex items-center gap-2">

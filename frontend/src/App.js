@@ -4,6 +4,7 @@ import { Toaster } from 'sonner';
 import { AuthProvider } from '@/contexts/AuthContext';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import Sidebar from '@/components/Sidebar';
+import TopHeader from '@/components/TopHeader';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import SuperAdminDashboard from '@/pages/SuperAdminDashboard';
@@ -14,18 +15,20 @@ import OrganisationDashboardNew from '@/pages/OrganisationDashboardNew';
 import OrganisationsPlatformManagement from '@/pages/OrganisationsPlatformManagement';
 import OrganisationDetailView from '@/pages/OrganisationDetailView';
 import ProductSafetyControl from '@/pages/ProductSafetyControl';
-import AuditLogsViewer from '@/pages/AuditLogsViewer';
+import SuperAdminCallLogs from '@/pages/SuperAdminCallLogs';
 import KBGovernance from '@/pages/KBGovernance';
 import OrganisationCompanies from '@/pages/OrganisationCompanies';
 import OrganisationBrands from '@/pages/OrganisationBrands';
 import OrganisationProducts from '@/pages/OrganisationProducts';
 import OrganisationProfile from '@/pages/OrganisationProfile';
 import OrganisationSettings from '@/pages/OrganisationSettings';
+import OrganisationCallLogs from '@/pages/OrganisationCallLogs';
 import CompanyBrands from '@/pages/CompanyBrands';
 import CompanyProducts from '@/pages/CompanyProducts';
 import CompanyDashboard from '@/pages/CompanyDashboard';
 import CompanyProfile from '@/pages/CompanyProfile';
 import CompanySettings from '@/pages/CompanySettings';
+import CompanyCallLogs from '@/pages/CompanyCallLogs';
 import SuperAdminCompanies from '@/pages/SuperAdminCompanies';
 import SuperAdminCallAnalytics from '@/pages/SuperAdminCallAnalytics';
 import SuperAdminAIManagement from '@/pages/SuperAdminAIManagement';
@@ -35,9 +38,12 @@ import SuperAdminSettings from '@/pages/SuperAdminSettings';
 
 function AuthenticatedLayout({ children }) {
   return (
-    <div className="flex">
+    <div className="flex min-h-screen">
       <Sidebar />
-      <main className="flex-1 ml-64 p-8">{children}</main>
+      <div className="flex-1 pl-64">
+        <TopHeader />
+        <main className="pt-16 p-8 h-full bg-gray-50/30">{children}</main>
+      </div>
     </div>
   );
 }
@@ -171,6 +177,16 @@ function App() {
               }
             />
             <Route
+              path="/organisation/call-logs"
+              element={
+                <ProtectedRoute requiredRole="organisation">
+                  <AuthenticatedLayout>
+                    <OrganisationCallLogs />
+                  </AuthenticatedLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/organisation/companies"
               element={
                 <ProtectedRoute requiredRole="organisation">
@@ -273,6 +289,16 @@ function App() {
               }
             />
             <Route
+              path="/company/call-logs"
+              element={
+                <ProtectedRoute requiredRole="company">
+                  <AuthenticatedLayout>
+                    <CompanyCallLogs />
+                  </AuthenticatedLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/company/settings"
               element={
                 <ProtectedRoute requiredRole="company">
@@ -315,11 +341,11 @@ function App() {
               }
             />
             <Route
-              path="/superadmin/audit-logs"
+              path="/superadmin/call-logs"
               element={
                 <ProtectedRoute requiredRole="superadmin">
                   <AuthenticatedLayout>
-                    <AuditLogsViewer />
+                    <SuperAdminCallLogs />
                   </AuthenticatedLayout>
                 </ProtectedRoute>
               }

@@ -58,12 +58,17 @@ class OrganisationStats(BaseModel):
     is_active: bool
     brand_count: int
     product_count: int
+    company_count: int = 0
     call_count: int
     phone_count: int
     phone_numbers: Optional[str]
     secondary_phone: Optional[str] = None
     email: Optional[str] = None
     address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    plan_type: Optional[str] = None
     description: Optional[str] = None
     website_url: Optional[str] = None
     admin_username: Optional[str] = None
@@ -501,6 +506,46 @@ async def create_organisation(
     }
 
 
+@router.get("/organisations/{org_id}/products")
+async def get_organisation_products(
+    org_id: int,
+    current_user: dict = Depends(get_current_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all products for a specific organisation"""
+    result = await db.execute(
+        select(Product).where(Product.organisation_id == org_id)
+    )
+    products = result.scalars().all()
+
+    product_list = []
+    for p in products:
+        # Get brand name
+        brand_name = None
+        if p.brand_id:
+            brand_result = await db.execute(select(Brand.name).where(Brand.id == p.brand_id))
+            brand_name = brand_result.scalar()
+
+        product_list.append({
+            "id": p.id,
+            "name": p.name,
+            "brand_id": p.brand_id,
+            "brand_name": brand_name,
+            "category": p.category,
+            "sub_category": p.sub_category,
+            "description": p.description,
+            "target_crops": p.target_crops,
+            "target_problems": p.target_problems,
+            "dosage": p.dosage,
+            "price": str(p.price) if p.price else None,
+            "price_range": p.price_range,
+            "is_active": p.is_active,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+
+    return product_list
+
+
 @router.get("/organisations/stats", response_model=List[OrganisationStats])
 async def get_organisations_stats(
     skip: int = 0,
@@ -536,6 +581,12 @@ async def get_organisations_stats(
         )
         total_products = product_count.scalar() or 0
         
+        # Count companies
+        company_count = await db.execute(
+            select(func.count(Company.id)).where(Company.organisation_id == org.id)
+        )
+        total_companies = company_count.scalar() or 0
+        
         # Count calls
         call_count = await db.execute(
             text(f"SELECT COUNT(*) FROM call_sessions WHERE organisation_id = {org.id}")
@@ -561,12 +612,17 @@ async def get_organisations_stats(
             "is_active": org.status == 'active',
             "brand_count": total_brands,
             "product_count": total_products,
+            "company_count": total_companies,
             "call_count": total_calls,
             "phone_count": len(phones),
             "phone_numbers": org.phone_numbers,
             "secondary_phone": org.secondary_phone,
             "email": org.email,
             "address": org.address,
+            "city": org.city,
+            "state": org.state,
+            "pincode": org.pincode,
+            "plan_type": org.plan_type,
             "description": org.description,
             "website_url": org.website_link,
             "admin_username": admin_user.username if admin_user else None,
@@ -1347,6 +1403,115 @@ async def get_call_analytics(
         "calls_by_hour": calls_by_hour,
         "org_distribution": sorted(org_distribution, key=lambda x: x['call_count'], reverse=True)
     }
+    
+
+@router.get("/calls")
+async def get_superadmin_calls(
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    organisation_id: Optional[int] = Query(None),
+    company_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_super_admin)
+):
+    """
+    Get all call logs across the platform for Superadmin.
+    Supports filtering by organisation and company.
+    """
+    from db.models.call_summary import CallSummary
+    from db.models.farmer import Farmer
+    from db.models.call_metrics import CallMetrics
+    
+    query = select(CallSession, CallSummary, Farmer, CallMetrics).outerjoin(
+        CallSummary, CallSession.id == CallSummary.call_session_id
+    ).outerjoin(
+        Farmer, CallSession.farmer_id == Farmer.id
+    ).outerjoin(
+        CallMetrics, CallSession.id == CallMetrics.call_session_id
+    )
+    
+    # Filtering
+    if organisation_id:
+        query = query.where(CallSession.organisation_id == organisation_id)
+        
+    if start_date:
+        query = query.where(CallSession.created_at >= start_date)
+    if end_date:
+        query = query.where(CallSession.created_at <= end_date)
+        
+    # Order by newest first
+    query = query.order_by(desc(CallSession.created_at)).limit(500)
+    
+    result = await db.execute(query)
+    rows = result.all()
+    
+    # Pre-fetch organisations and companies for mapping
+    org_result = await db.execute(select(Organisation))
+    all_orgs = {o.id: o.name for o in org_result.scalars().all()}
+    
+    comp_result = await db.execute(select(Company))
+    all_comps = comp_result.scalars().all()
+    
+    # Map phone to company name logic (reuse from company_calls.py)
+    phone_to_company = {}
+    for c in all_comps:
+        if c.phone:
+            phone_to_company[c.phone.lstrip('+')[-10:]] = c.name
+        if c.secondary_phone:
+            phone_to_company[c.secondary_phone.lstrip('+')[-10:]] = c.name
+
+    formatted_logs = []
+    
+    for session, summary, farmer, metrics in rows:
+        import json
+        key_recs = summary.key_recommendations if summary and summary.key_recommendations else []
+        if isinstance(key_recs, str):
+            try:
+                key_recs = json.loads(key_recs)
+            except:
+                key_recs = [key_recs]
+                
+        # Phone number based on direction
+        farmer_phone = session.from_phone if session.call_direction == 'inbound' else session.to_phone
+        company_phone = session.to_phone if session.call_direction == 'inbound' else session.from_phone
+        
+        company_name = "Unknown Company"
+        if company_phone:
+            clean_cp = company_phone.lstrip('+')[-10:]
+            company_name = phone_to_company.get(clean_cp, "Unknown Company")
+        
+        # Filter by company_id if provided (client-side of this loop for simplicity given the mapping logic)
+        if company_id:
+            target_comp = next((c for c in all_comps if c.id == company_id), None)
+            if target_comp and company_name != target_comp.name:
+                continue
+
+        satisfaction = "Pending"
+        if metrics and metrics.farmer_satisfaction:
+            if metrics.farmer_satisfaction >= 4:
+                satisfaction = "Satisfied"
+            elif metrics.farmer_satisfaction <= 2:
+                satisfaction = "Not Satisfied"
+        
+        formatted_logs.append({
+            "id": session.id,
+            "session_id": session.session_id,
+            "farmer_phone": farmer_phone or session.phone_number,
+            "farmer_name": farmer.name if farmer else "Unknown Farmer",
+            "organisation_name": all_orgs.get(session.organisation_id, "Unknown Organisation"),
+            "company_name": company_name,
+            "call_direction": session.call_direction,
+            "status": session.status.value if session.status else "COMPLETED",
+            "duration": session.duration_seconds,
+            "created_at": session.created_at.isoformat() if session.created_at else None,
+            "target_crop": (farmer.crop_type if farmer else "Unknown") or "Unknown", 
+            "suggested_products": summary.products_mentioned if summary else [],
+            "satisfaction": satisfaction, 
+            "key_recommendations": key_recs,
+            "summary_text": summary.summary_text_english if summary else ""
+        })
+        
+    return formatted_logs
 
 
 # ===== Platform Config Management =====
@@ -1482,27 +1647,61 @@ async def delete_user(user_id: int, request: Request, current_user: dict = Depen
         raise HTTPException(status_code=404, detail="User not found")
         
     username = user.username
+    user_role = user.role
     
-    # First, handle dependent resources if this user is a primary owner of an organisation or company
-    if user.role == "organisation" and user.organisation_id:
-        from db.models.organisation import Organisation
-        org_result = await db.execute(select(Organisation).where(Organisation.id == user.organisation_id))
-        org = org_result.scalar_one_or_none()
-        if org:
-            await db.delete(org)
-            
-    elif user.role == "company" and user.company_id:
-        from db.models.company import Company
-        company_result = await db.execute(select(Company).where(Company.id == user.company_id))
-        company = company_result.scalar_one_or_none()
-        if company:
-            await db.delete(company)
-
-    # Finally, delete the user (will be handled by cascade if org/company was deleted, but safe to call)
+    # Save IDs before any delete (FK SET NULL would clear these)
+    org_id_to_delete = user.organisation_id if user.role == "organisation" else None
+    company_id_to_delete = user.company_id if user.role == "company" else None
+    # Also capture the org_id for company users (company belongs to an org)
+    company_org_id = user.organisation_id if user.role == "company" else None
+    
+    # Step 1: Detach user from org/company to avoid FK conflicts
+    user.organisation_id = None
+    user.company_id = None
+    await db.flush()
+    
+    # Step 2: Delete the user
     await db.delete(user)
+    await db.flush()
+    
+    # Step 3: Delete the organisation (and its cascaded companies, brands, products)
+    if org_id_to_delete:
+        # Check if any OTHER users still belong to this organisation
+        other_users = await db.execute(
+            select(User).where(User.organisation_id == org_id_to_delete)
+        )
+        remaining_users = other_users.scalars().all()
+        
+        if not remaining_users:
+            # No other users, safe to delete the organisation
+            org_result = await db.execute(select(Organisation).where(Organisation.id == org_id_to_delete))
+            org = org_result.scalar_one_or_none()
+            if org:
+                await db.delete(org)
+                logger.info(f"Cascade deleted organisation '{org.name}' (id={org_id_to_delete}) with user '{username}'")
+        else:
+            logger.info(f"Organisation id={org_id_to_delete} kept — {len(remaining_users)} other user(s) still linked")
+    
+    # Step 4: Delete the company (and its cascaded brands, products)
+    if company_id_to_delete:
+        # Check if any OTHER users still belong to this company
+        other_users = await db.execute(
+            select(User).where(User.company_id == company_id_to_delete)
+        )
+        remaining_users = other_users.scalars().all()
+        
+        if not remaining_users:
+            company_result = await db.execute(select(Company).where(Company.id == company_id_to_delete))
+            company = company_result.scalar_one_or_none()
+            if company:
+                await db.delete(company)
+                logger.info(f"Cascade deleted company '{company.name}' (id={company_id_to_delete}) with user '{username}'")
+        else:
+            logger.info(f"Company id={company_id_to_delete} kept — {len(remaining_users)} other user(s) still linked")
+    
     await db.commit()
     
-    # Audit log
+    # Audit log (after commit so admin user is still valid)
     current_user_obj = await db.execute(select(User).where(User.username == current_user["username"]))
     admin_obj = current_user_obj.scalar_one_or_none()
     if admin_obj:
@@ -1511,15 +1710,17 @@ async def delete_user(user_id: int, request: Request, current_user: dict = Depen
             user=admin_obj,
             action_type="user_delete",
             action_category="user",
-            description=f"Deleted user: {username}",
+            description=f"Deleted user: {username} (role: {user_role})" + 
+                (f" and organisation id={org_id_to_delete}" if org_id_to_delete else "") +
+                (f" and company id={company_id_to_delete}" if company_id_to_delete else ""),
             entity_type="user",
             entity_id=user_id,
-            old_value={"username": username},
+            old_value={"username": username, "role": user_role},
             severity="warning",
             request=request,
         )
         
-    return {"success": True, "message": f"User '{username}' deleted successfully"}
+    return {"success": True, "message": f"User '{username}' and all related data deleted successfully"}
 
 @router.put("/users/{user_id}")
 async def update_user(
