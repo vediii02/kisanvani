@@ -250,6 +250,9 @@ export default function CompanyBrands() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Create New Brand</DialogTitle>
+            <DialogDescription>
+              Add a new brand to your company profile.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -305,6 +308,9 @@ export default function CompanyBrands() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Edit Brand</DialogTitle>
+            <DialogDescription>
+              Update your brand's information and visibility.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>

@@ -1,6 +1,6 @@
 """Call summary model for SMS/WhatsApp"""
 
-from sqlalchemy import Column, Integer, Text, DateTime, JSON, ForeignKey, Boolean, Index
+from sqlalchemy import Column, Integer, Text, String, DateTime, JSON, ForeignKey, Boolean, Index
 from sqlalchemy.orm import relationship
 from db.base import Base
 from datetime import datetime
@@ -17,6 +17,7 @@ class CallSummary(Base):
     summary_text_english = Column(Text, nullable=True)
     
     # Structured data
+    target_crop = Column(String(100), nullable=True)
     key_recommendations = Column(JSON, nullable=True)  # ["recommendation 1", "recommendation 2"]
     products_mentioned = Column(JSON, nullable=True)  # [product_id_1, product_id_2]
     

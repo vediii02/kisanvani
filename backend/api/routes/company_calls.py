@@ -107,45 +107,72 @@ async def get_company_calls(
     formatted_logs = []
     
     for session, summary, farmer, metrics in rows:
-        key_recs = summary.key_recommendations if summary and summary.key_recommendations else []
-        if isinstance(key_recs, str):
-            import json
-            try:
-                key_recs = json.loads(key_recs)
-            except:
-                key_recs = [key_recs]
-                
-        # Phone number based on direction
-        farmer_phone = session.from_phone if session.call_direction == 'inbound' else session.to_phone
-        company_phone = session.to_phone if session.call_direction == 'inbound' else session.from_phone
-        
-        company_name = "Unknown Company"
-        if company_phone:
-            clean_cp = company_phone.lstrip('+')[-10:]
-            company_name = phone_to_company.get(clean_cp, "Unknown Company")
-        
-        satisfaction = "Pending"
-        if metrics and metrics.farmer_satisfaction:
-            if metrics.farmer_satisfaction >= 4:
-                satisfaction = "Satisfied"
-            elif metrics.farmer_satisfaction <= 2:
-                satisfaction = "Not Satisfied"
-        
-        formatted_logs.append({
-            "id": session.id,
-            "session_id": session.session_id,
-            "farmer_phone": farmer_phone or session.phone_number,
-            "farmer_name": farmer.name if farmer else "Unknown Farmer",
-            "company_name": company_name,
-            "call_direction": session.call_direction,
-            "status": session.status.value if session.status else "COMPLETED",
-            "duration": session.duration_seconds,
-            "created_at": session.created_at.isoformat() if session.created_at else None,
-            "target_crop": (farmer.crop_type if farmer else "Unknown") or "Unknown", 
-            "suggested_products": summary.products_mentioned if summary else [],
-            "satisfaction": satisfaction, 
-            "key_recommendations": key_recs,
-            "summary_text": summary.summary_text_english if summary else ""
-        })
+        try:
+            key_recs = summary.key_recommendations if summary and summary.key_recommendations else []
+            if isinstance(key_recs, str):
+                import json
+                try:
+                    key_recs = json.loads(key_recs)
+                except:
+                    key_recs = [key_recs]
+                    
+            # Phone number based on direction
+            farmer_phone = session.from_phone if session.call_direction == 'inbound' else session.to_phone
+            company_phone = session.to_phone if session.call_direction == 'inbound' else session.from_phone
+            
+            # Try to match company from both phones (to handle admin test calls)
+            company_name = "Unknown Company"
+            cp_to = session.to_phone.lstrip('+')[-10:] if session.to_phone else ""
+            cp_from = session.from_phone.lstrip('+')[-10:] if session.from_phone else ""
+            
+            # Priority: 
+            # 1. For inbound, check to_phone first (the VN)
+            # 2. For outbound, check from_phone first (the VN)
+            # 3. Fallback to the other side
+            if session.call_direction == 'inbound':
+                company_name = phone_to_company.get(cp_to) or phone_to_company.get(cp_from)
+            else:
+                company_name = phone_to_company.get(cp_from) or phone_to_company.get(cp_to)
+            
+            # Strategy: If org has only one company, fallback to that company name
+            if not company_name and len(all_companies) == 1:
+                company_name = all_companies[0].name
+            
+            if not company_name:
+                company_name = "Unknown Company"
+            
+            satisfaction = "Pending"
+            if metrics and metrics.farmer_satisfaction:
+                if metrics.farmer_satisfaction >= 4:
+                    satisfaction = "Satisfied"
+                elif metrics.farmer_satisfaction <= 2:
+                    satisfaction = "Not Satisfied"
+            
+            # Safe status access handling both Enum and string
+            status_val = session.status
+            if hasattr(status_val, "value"):
+                status_val = status_val.value
+            elif status_val is None:
+                status_val = "COMPLETED"
+
+            formatted_logs.append({
+                "id": session.id,
+                "session_id": session.session_id,
+                "farmer_phone": farmer_phone or session.phone_number,
+                "farmer_name": farmer.name if farmer else "Unknown Farmer",
+                "company_name": company_name,
+                "call_direction": session.call_direction,
+                "status": status_val,
+                "duration": session.duration_seconds,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "target_crop": (summary.target_crop if summary and summary.target_crop else (farmer.crop_type if farmer else "Unknown")) or "Unknown", 
+                "suggested_products": summary.products_mentioned if summary else [],
+                "satisfaction": satisfaction, 
+                "key_recommendations": key_recs,
+                "summary_text": summary.summary_text_english if summary else ""
+            })
+        except Exception as e:
+            logger.error(f"Error formatting call log row for session {session.id if session else 'unknown'}: {e}")
+            continue
         
     return formatted_logs

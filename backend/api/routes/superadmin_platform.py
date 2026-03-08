@@ -1464,7 +1464,12 @@ async def get_superadmin_calls(
     
     # Map phone to company name logic (reuse from company_calls.py)
     phone_to_company = {}
+    org_id_to_companies = {}
     for c in all_comps:
+        if c.organisation_id not in org_id_to_companies:
+            org_id_to_companies[c.organisation_id] = []
+        org_id_to_companies[c.organisation_id].append(c)
+        
         if c.phone:
             phone_to_company[c.phone.lstrip('+')[-10:]] = c.name
         if c.secondary_phone:
@@ -1473,53 +1478,84 @@ async def get_superadmin_calls(
     formatted_logs = []
     
     for session, summary, farmer, metrics in rows:
-        import json
-        key_recs = summary.key_recommendations if summary and summary.key_recommendations else []
-        if isinstance(key_recs, str):
-            try:
-                key_recs = json.loads(key_recs)
-            except:
-                key_recs = [key_recs]
-                
-        # Phone number based on direction
-        farmer_phone = session.from_phone if session.call_direction == 'inbound' else session.to_phone
-        company_phone = session.to_phone if session.call_direction == 'inbound' else session.from_phone
-        
-        company_name = "Unknown Company"
-        if company_phone:
-            clean_cp = company_phone.lstrip('+')[-10:]
-            company_name = phone_to_company.get(clean_cp, "Unknown Company")
-        
-        # Filter by company_id if provided (client-side of this loop for simplicity given the mapping logic)
-        if company_id:
-            target_comp = next((c for c in all_comps if c.id == company_id), None)
-            if target_comp and company_name != target_comp.name:
-                continue
+        try:
+            import json
+            key_recs = summary.key_recommendations if summary and summary.key_recommendations else []
+            if isinstance(key_recs, str):
+                try:
+                    key_recs = json.loads(key_recs)
+                except:
+                    key_recs = [key_recs]
+                    
+            # Phone number based on direction
+            farmer_phone = session.from_phone if session.call_direction == 'inbound' else session.to_phone
+            company_phone = session.to_phone if session.call_direction == 'inbound' else session.from_phone
+            
+            # Try to match company from both phones (to handle admin test calls)
+            company_name = "Unknown Company"
+            cp_to = session.to_phone.lstrip('+')[-10:] if session.to_phone else ""
+            cp_from = session.from_phone.lstrip('+')[-10:] if session.from_phone else ""
+            
+            # Priority: 
+            # 1. For inbound, check to_phone first (the VN)
+            # 2. For outbound, check from_phone first (the VN)
+            # 3. Fallback to the other side
+            if session.call_direction == 'inbound':
+                company_name = phone_to_company.get(cp_to) or phone_to_company.get(cp_from)
+            else:
+                company_name = phone_to_company.get(cp_from) or phone_to_company.get(cp_to)
+            
+            # Strategy: If org has only one company, fallback to that company name
+            current_org_companies = org_id_to_companies.get(session.organisation_id, [])
+            if not company_name and len(current_org_companies) == 1:
+                company_name = current_org_companies[0].name
+            
+            if not company_name:
+                company_name = "Unknown Company"
+            
+            # Filter by company_id if provided (client-side of this loop for simplicity given the mapping logic)
+            if company_id:
+                if company_name == "Unknown Company":
+                    continue
+                # Match by comparing names since we've already done the mapping
+                target_comp = next((c for c in current_org_companies if c.id == company_id), None)
+                if target_comp and company_name != target_comp.name:
+                    continue
 
-        satisfaction = "Pending"
-        if metrics and metrics.farmer_satisfaction:
-            if metrics.farmer_satisfaction >= 4:
-                satisfaction = "Satisfied"
-            elif metrics.farmer_satisfaction <= 2:
-                satisfaction = "Not Satisfied"
-        
-        formatted_logs.append({
-            "id": session.id,
-            "session_id": session.session_id,
-            "farmer_phone": farmer_phone or session.phone_number,
-            "farmer_name": farmer.name if farmer else "Unknown Farmer",
-            "organisation_name": all_orgs.get(session.organisation_id, "Unknown Organisation"),
-            "company_name": company_name,
-            "call_direction": session.call_direction,
-            "status": session.status.value if session.status else "COMPLETED",
-            "duration": session.duration_seconds,
-            "created_at": session.created_at.isoformat() if session.created_at else None,
-            "target_crop": (farmer.crop_type if farmer else "Unknown") or "Unknown", 
-            "suggested_products": summary.products_mentioned if summary else [],
-            "satisfaction": satisfaction, 
-            "key_recommendations": key_recs,
-            "summary_text": summary.summary_text_english if summary else ""
-        })
+            satisfaction = "Pending"
+            if metrics and metrics.farmer_satisfaction:
+                if metrics.farmer_satisfaction >= 4:
+                    satisfaction = "Satisfied"
+                elif metrics.farmer_satisfaction <= 2:
+                    satisfaction = "Not Satisfied"
+            
+            # Safe status access handling both Enum and string
+            status_val = session.status
+            if hasattr(status_val, "value"):
+                status_val = status_val.value
+            elif status_val is None:
+                status_val = "COMPLETED"
+
+            formatted_logs.append({
+                "id": session.id,
+                "session_id": session.session_id,
+                "farmer_phone": farmer_phone or session.phone_number,
+                "farmer_name": farmer.name if farmer else "Unknown Farmer",
+                "organisation_name": all_orgs.get(session.organisation_id, "Unknown Organisation"),
+                "company_name": company_name,
+                "call_direction": session.call_direction,
+                "status": status_val,
+                "duration": session.duration_seconds,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+                "target_crop": (summary.target_crop if summary and summary.target_crop else (farmer.crop_type if farmer else "Unknown")) or "Unknown", 
+                "suggested_products": summary.products_mentioned if summary else [],
+                "satisfaction": satisfaction, 
+                "key_recommendations": key_recs,
+                "summary_text": summary.summary_text_english if summary else ""
+            })
+        except Exception as e:
+            logger.error(f"Error formatting superadmin call log row for session {session.id if session else 'unknown'}: {e}")
+            continue
         
     return formatted_logs
 

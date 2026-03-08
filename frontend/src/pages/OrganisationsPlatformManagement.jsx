@@ -51,7 +51,10 @@ export default function OrganisationsPlatformManagement() {
     website_url: '',
     username: '',
     admin_password: '',
-    auto_import_products: false
+    auto_import_products: false,
+    state: '',
+    city: '',
+    pincode: ''
   });
 
   useEffect(() => {
@@ -81,7 +84,10 @@ export default function OrganisationsPlatformManagement() {
       website_url: '',
       username: '',
       admin_password: '',
-      auto_import_products: false
+      auto_import_products: false,
+      state: '',
+      city: '',
+      pincode: ''
     });
   };
 
@@ -372,7 +378,10 @@ export default function OrganisationsPlatformManagement() {
                             website_url: org.website_url || '',
                             admin_password: '',
                             username: org.admin_username || '',
-                            is_active: org.is_active
+                            is_active: org.is_active,
+                            state: org.state || '',
+                            city: org.city || '',
+                            pincode: org.pincode || ''
                           });
                           setShowEditModal(true);
                         }}
@@ -420,6 +429,9 @@ export default function OrganisationsPlatformManagement() {
               <Plus className="h-6 w-6 text-green-600" />
               Add New Organisation
             </DialogTitle>
+            <DialogDescription>
+              Enter the organisation details and set up an administrator account.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 pt-4">
@@ -573,6 +585,9 @@ export default function OrganisationsPlatformManagement() {
               <Edit2 className="h-6 w-6 text-blue-600" />
               Edit Organisation
             </DialogTitle>
+            <DialogDescription>
+              Modify the organisation's profile and administrative settings.
+            </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 pt-4">

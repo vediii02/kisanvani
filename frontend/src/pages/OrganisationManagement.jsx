@@ -134,6 +134,9 @@ export default function OrganisationManagement() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create New Organisation</DialogTitle>
+              <DialogDescription>
+                Provide the basic details to register a new organisation.
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleCreateOrg}>
               <div className="space-y-4 py-4">
@@ -232,6 +235,9 @@ export default function OrganisationManagement() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Add Phone Number</DialogTitle>
+            <DialogDescription>
+              Assign a new virtual phone number to this organisation.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleAddPhone}>
             <div className="space-y-4 py-4">

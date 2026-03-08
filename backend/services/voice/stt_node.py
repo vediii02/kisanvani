@@ -33,6 +33,12 @@ class SarvamSTT:
             self.barge_in_threshold = int(os.getenv("BARGE_IN_THRESHOLD", "10"))
         except ValueError:
             self.barge_in_threshold = 10
+        self._closed = False
+
+    async def _mark_disconnected(self):
+        async with self._conn_lock:
+            self._ws = None
+            self._ws_context = None
 
     async def _ping_loop(self):
         try:
@@ -46,9 +52,16 @@ class SarvamSTT:
 
     async def _ensure_connection(self):
         async with self._conn_lock:
-            if self._ws is None:
+            ws_closed = False
+            if self._ws is not None and hasattr(self._ws, "_websocket"):
+                ws_closed = getattr(self._ws._websocket, "closed", False)
+
+            if self._ws is None or ws_closed:
                 logger.info(f"Connecting to SarvamAI (Rate: {self.sample_rate})...")
                 try:
+                    if self._ping_task:
+                        self._ping_task.cancel()
+                        self._ping_task = None
                     self._ws_context = self.client.speech_to_text_streaming.connect(
                         language_code=self.language_code,
                         sample_rate=str(self.sample_rate),
@@ -81,68 +94,73 @@ class SarvamSTT:
             }
             # Send raw JSON to bypass Pydantic validation
             await self._ws._websocket.send(json.dumps(payload))
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"Sarvam send socket closed ({e.code}); will reconnect.")
+            await self._mark_disconnected()
         except Exception as e:
             logger.error(f"Send Error: {e}", exc_info=True)
             # Optionally trigger reconnect logic here if needed for long-running sessions
 
     async def receive_events(self) -> AsyncIterator[VoiceAgentEvent]:
-        try:
-            ws = await self._ensure_connection()
-            if not ws:
-                return
-        except Exception as e:
-            logger.error(f"Could not establish connection for receiving: {e}", exc_info=True)
-            return
-
         last_yielded_transcript = ""
         pending_transcript = ""
-        
-        try:
-            while True:
-                try:
-                    message = await asyncio.wait_for(ws.recv(), timeout=1.5)
-                    
-                    data = getattr(message, "data", None)
-                    if data and hasattr(data, "transcript"):
-                        transcript = data.transcript
-                        if not transcript or transcript == last_yielded_transcript:
-                            continue
-                        
-                        last_yielded_transcript = transcript
-                        pending_transcript = transcript
-                        is_final = any(p in transcript for p in ["।", ".", "?", "!"])
-                        
-                        logger.info(f"Raw: {transcript} (final={is_final})")
-                        
-                        # Only yield BargeIn if intent is detected (at least 2 words or long enough)
-                        words = transcript.strip().split()
-                        if len(words) >= 2 or len(transcript) >= self.barge_in_threshold:
-                            yield BargeInEvent.create()
-                        
-                        if is_final:
-                            yield STTOutputEvent.create(transcript=transcript)
-                            pending_transcript = ""  # Cleared because it was final
-                        else:
-                            yield STTChunkEvent.create(transcript=transcript)
-                    else:
-                        logger.info(f"Unknown Msg: {message}")
-                        
-                except asyncio.TimeoutError:
-                    # User stopped speaking for 1.5s. If we have pending text, make it final
-                    if pending_transcript:
-                        logger.info(f"Silence timeout. Flushing as final: {pending_transcript}")
-                        yield STTOutputEvent.create(transcript=pending_transcript)
-                        pending_transcript = ""
-                        last_yielded_transcript = ""  # Reset so next utterance isn't skipped if identical
 
-        except websockets.exceptions.ConnectionClosed as e:
-            logger.info(f"WebSocket closed: {e.code}")
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Receiver Loop Error: {e}", exc_info=True)
+        while not self._closed:
+            try:
+                ws = await self._ensure_connection()
+                if not ws:
+                    await asyncio.sleep(0.5)
+                    continue
+
+                while not self._closed:
+                    try:
+                        message = await asyncio.wait_for(ws.recv(), timeout=1.5)
+
+                        data = getattr(message, "data", None)
+                        if data and hasattr(data, "transcript"):
+                            transcript = data.transcript
+                            if not transcript or transcript == last_yielded_transcript:
+                                continue
+
+                            last_yielded_transcript = transcript
+                            pending_transcript = transcript
+                            is_final = any(p in transcript for p in ["।", ".", "?", "!"])
+
+                            logger.info(f"Raw: {transcript} (final={is_final})")
+
+                            # Only yield BargeIn if intent is detected (at least 2 words or long enough)
+                            words = transcript.strip().split()
+                            if len(words) >= 2 or len(transcript) >= self.barge_in_threshold:
+                                yield BargeInEvent.create()
+
+                            if is_final:
+                                yield STTOutputEvent.create(transcript=transcript)
+                                pending_transcript = ""  # Cleared because it was final
+                            else:
+                                yield STTChunkEvent.create(transcript=transcript)
+                        else:
+                            logger.info(f"Unknown Msg: {message}")
+
+                    except asyncio.TimeoutError:
+                        # User stopped speaking for 1.5s. If we have pending text, make it final
+                        if pending_transcript:
+                            logger.info(f"Silence timeout. Flushing as final: {pending_transcript}")
+                            yield STTOutputEvent.create(transcript=pending_transcript)
+                            pending_transcript = ""
+                            last_yielded_transcript = ""  # Reset so next utterance isn't skipped if identical
+                    except websockets.exceptions.ConnectionClosed as e:
+                        logger.warning(f"Sarvam receive socket closed ({e.code}); reconnecting.")
+                        await self._mark_disconnected()
+                        break
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Receiver Loop Error: {e}", exc_info=True)
+                await asyncio.sleep(0.5)
 
     async def close(self):
+        self._closed = True
         async with self._conn_lock:
             if self._ping_task:
                 self._ping_task.cancel()

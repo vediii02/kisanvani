@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent
 from services.voice.llm import get_agent_executor
 from services.voice.logger import setup_logger
-from services.voice.session_context import get_current_organisation_id, get_current_company_id
+from services.voice.session_context import get_current_organisation_id, get_current_company_id, get_current_session_id
 
 logger = setup_logger("agent_node")
 
@@ -28,7 +28,7 @@ async def agent_stream(
     - Barge-in (cancel current AI response) with grace period
     - Sentence-level chunking for TTS
     """
-    thread_id = str(uuid4())
+    thread_id = get_current_session_id() or str(uuid4())
     output_queue: asyncio.Queue = asyncio.Queue()
     current_ai_task: asyncio.Task | None = None
     ai_response_start_time: float = 0.0  # When the current AI response started

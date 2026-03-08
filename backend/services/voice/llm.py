@@ -1,5 +1,6 @@
 import os
 import uuid
+import re
 from typing import Any
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -231,26 +232,61 @@ async def update_farmer_profile(
         problem_area: Specific part of crop affected (e.g. "leaves", "roots")
         crop_age_days: Age of the crop in days
     """
-    from services.voice.session_context import get_current_phone_number
+    from services.voice.session_context import (
+        get_current_phone_number,
+        get_current_farmer_row_id,
+        set_current_farmer_row_id,
+        get_current_session_id,
+        set_current_phone_number,
+    )
     phone_number = get_current_phone_number()
+    farmer_row_id = get_current_farmer_row_id()
+    session_id = get_current_session_id()
+
+    if not any([
+        name, village, district, state, crop_type,
+        land_size, crop_area, problem_area, crop_age_days
+    ]):
+        logger.warning("Ignoring empty update_farmer_profile tool call")
+        return "Error: No profile fields were provided."
     
-    if not phone_number:
-        logger.warning("Attempted to update farmer profile without a phone number in context")
+    if (not phone_number or farmer_row_id is None) and session_id:
+        try:
+            from db.models.call_session import CallSession
+            async with AsyncSessionLocal() as db:
+                call_row = (
+                    await db.execute(
+                        select(
+                            CallSession.farmer_id,
+                            CallSession.from_phone,
+                            CallSession.phone_number,
+                        ).where(CallSession.session_id == session_id)
+                    )
+                ).first()
+                if call_row:
+                    session_farmer_id, session_from_phone, session_phone = call_row
+                    if farmer_row_id is None and session_farmer_id:
+                        farmer_row_id = int(session_farmer_id)
+                        set_current_farmer_row_id(farmer_row_id)
+                    if not phone_number:
+                        phone_number = session_from_phone or session_phone
+                        if phone_number:
+                            set_current_phone_number(phone_number)
+        except Exception as e:
+            logger.warning("Failed to resolve farmer context from call session: %s", e)
+
+    if not phone_number and farmer_row_id is None:
+        logger.warning("Attempted to update farmer profile without phone/farmer context")
         return "Error: No phone number associated with this session. Profile not updated."
 
-    logger.info("Updating farmer profile for phone=%s: name=%r, village=%r, crop=%r", 
+    logger.info("Updating farmer profile for phone=%s: name=%r, village=%r, crop=%r",
                 phone_number, name, village, crop_type)
 
     try:
         from db.models.farmer import Farmer
-        from sqlalchemy import select, update, insert
+        from sqlalchemy import update, insert
 
         async with AsyncSessionLocal() as db:
-            # Check if farmer exists
-            stmt = select(Farmer).where(Farmer.phone_number == phone_number)
-            result = await db.execute(stmt)
-            farmer = result.scalar_one_or_none()
-
             # Prepare values (filter out None)
             vals = {
                 "name": name,
@@ -264,23 +300,25 @@ async def update_farmer_profile(
                 "crop_age_days": crop_age_days
             }
             update_vals = {k: v for k, v in vals.items() if v is not None}
-
-            if farmer:
+            if farmer_row_id is None:
+                # First profile write in this call: always create a new farmer row.
+                insert_vals = {"phone_number": phone_number}
+                insert_vals.update(update_vals)
+                insert_stmt = insert(Farmer).values(**insert_vals).returning(Farmer.id)
+                inserted_id = (await db.execute(insert_stmt)).scalar_one()
+                set_current_farmer_row_id(inserted_id)
+            else:
+                # Subsequent writes in same call update only that call's row.
                 if update_vals:
                     await db.execute(
                         update(Farmer)
-                        .where(Farmer.phone_number == phone_number)
+                        .where(Farmer.id == farmer_row_id)
                         .values(**update_vals)
                     )
-            else:
-                # For insert, merge defaults with provided values
-                insert_vals = {"phone_number": phone_number}
-                insert_vals.update(update_vals)
-                await db.execute(insert(Farmer).values(**insert_vals))
-                
+
             await db.commit()
             
-        return "Farmer profile successfully updated in database."
+        return "Farmer profile successfully saved for this call."
     except Exception as e:
         logger.error("Failed to update farmer profile: %s", e, exc_info=True)
         return f"Error updating profile: {str(e)}"
@@ -395,6 +433,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     if organisation_id is None:
         profiling_tools = [update_farmer_profile]
         advisory_tools = [retrieve_context]
+        _retrieve_context_direct = retrieve_context.coroutine
     else:
         _retrieve_context_fn = retrieve_context.coroutine
         _update_farmer_profile_fn = update_farmer_profile.coroutine
@@ -425,12 +464,43 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
         profiling_tools = [update_farmer_profile_scoped]
         advisory_tools = [retrieve_context_scoped]
+        _retrieve_context_direct = retrieve_context_scoped.coroutine
+
+    def _recent_has_retrieval(messages: Sequence[BaseMessage], lookback: int = 12) -> bool:
+        """Check whether recent state already includes KB retrieval output."""
+        for msg in reversed(list(messages)[-lookback:]):
+            if getattr(msg, "type", "") != "tool":
+                continue
+            if getattr(msg, "name", "") == "retrieve_context":
+                return True
+            content = str(getattr(msg, "content", "") or "").lower()
+            if "source:" in content or "no relevant information found in the knowledge base" in content:
+                return True
+        return False
+
+    def _build_retrieval_query(messages: Sequence[BaseMessage]) -> str:
+        """Build a compact crop/symptom query from recent farmer utterances."""
+        human_texts: list[str] = []
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                txt = str(getattr(msg, "content", "") or "").strip()
+                if txt and not txt.startswith("__"):
+                    human_texts.append(txt)
+            if len(human_texts) >= 4:
+                break
+
+        query = " ".join(reversed(human_texts))
+        query = re.sub(r"\s+", " ", query).strip()
+        return query or "crop symptoms and treatment"
 
     # Initialize node LLMs
+    # Keep both tools available after greeting so stage transitions do not block
+    # legitimate tool usage in mixed user utterances (profile + advisory together).
+    all_tools = profiling_tools + advisory_tools
     greeting_llm = current_llm.bind_tools([])
-    profiling_llm = current_llm.bind_tools(profiling_tools)
-    diagnostic_llm = current_llm.bind_tools(profiling_tools + advisory_tools) # Diagnostic now has both so it can't hallucinate
-    advisory_llm = current_llm.bind_tools(advisory_tools)
+    profiling_llm = current_llm.bind_tools(all_tools)
+    diagnostic_llm = current_llm.bind_tools(all_tools)
+    advisory_llm = current_llm.bind_tools(all_tools)
 
     # Node Functions
     async def greeting_node(state: AgentState):
@@ -449,7 +519,37 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         return {"messages": [response], "stage": "diagnostic"}
 
     async def advisory_node(state: AgentState):
-        messages = [SystemMessage(content=ADVISORY_PROMPT)] + list(state["messages"])
+        raw_messages = list(state["messages"])
+
+        # Hard guard: do not allow advisory to proceed without KB retrieval.
+        if not _recent_has_retrieval(raw_messages):
+            forced_query = _build_retrieval_query(raw_messages)
+            logger.info("Forcing retrieve_context before advisory response: query=%r", forced_query)
+            kb_context = await _retrieve_context_direct(query=forced_query)
+
+            if (
+                "No relevant information found in the knowledge base." in kb_context
+                or kb_context.startswith("Retrieval error:")
+                or kb_context.startswith("Warning: Organisation context required")
+            ):
+                return {
+                    "messages": [
+                        AIMessage(
+                            content="Maaf kijiyega, mere paas iski satik dawai abhi nahi hai, main aapko ek krishi expert se baat karwa sakti hoon"
+                        )
+                    ],
+                    "stage": "advisory",
+                }
+
+            grounding_prompt = (
+                ADVISORY_PROMPT
+                + "\n\nSTRICT GROUNDING RULE:\nUse ONLY this retrieved context. If details are missing, do not guess medicines.\n\n"
+                + kb_context
+            )
+            response = await advisory_llm.ainvoke([SystemMessage(content=grounding_prompt)] + raw_messages)
+            return {"messages": [response], "stage": "advisory"}
+
+        messages = [SystemMessage(content=ADVISORY_PROMPT)] + raw_messages
         response = await advisory_llm.ainvoke(messages)
         return {"messages": [response], "stage": "advisory"}
 
@@ -509,7 +609,7 @@ Return ONLY ONE word: 'greeting', 'profiling', 'diagnostic', or 'advisory'."""
     workflow.add_node("profiling", profiling_node)
     workflow.add_node("diagnostic", diagnostic_node)
     workflow.add_node("advisory", advisory_node)
-    workflow.add_node("tools", ToolNode(profiling_tools + advisory_tools))
+    workflow.add_node("tools", ToolNode(all_tools))
 
     # All nodes route back to the intelligent router after responding to user
     workflow.add_conditional_edges(START, stage_router)

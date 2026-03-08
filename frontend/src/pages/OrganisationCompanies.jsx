@@ -3,7 +3,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Building2, Plus, Edit2, Trash2, Search, Phone, Mail, MapPin, Users, Package } from 'lucide-react';
@@ -192,8 +192,22 @@ export default function OrganisationCompanies() {
     setFormData({
       name: company.name || '',
       business_type: company.business_type || '',
+      contact_person: company.contact_person || '',
+      email: company.email || '',
+      phone: company.phone || '',
+      address: company.address || '',
+      gst_number: company.gst_number || '',
+      registration_number: company.registration_number || '',
+      status: company.status || 'active',
+      state: company.state || '',
+      city: company.city || '',
       pincode: company.pincode || '',
-      notes: company.notes || ''
+      notes: company.notes || '',
+      max_company_users: company.max_company_users || 5,
+      max_products: company.max_products || 100,
+      username: company.username || '',
+      password: '', // Don't pre-fill password in edit for security
+      login_email: company.email || '' // Usually email is username
     });
     setShowEditModal(true);
   };
@@ -388,6 +402,9 @@ export default function OrganisationCompanies() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Create New Company</DialogTitle>
+            <DialogDescription>
+              Add a new company to your organisation. This will also create a primary admin account for the company.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
@@ -587,6 +604,9 @@ export default function OrganisationCompanies() {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Company</DialogTitle>
+            <DialogDescription>
+              Update company details and configuration settings.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">

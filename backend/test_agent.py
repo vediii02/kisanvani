@@ -7,7 +7,11 @@ from uuid import uuid4
 sys.path.append(os.getcwd())
 
 from services.voice.llm import get_agent_executor, init_checkpointer
-from services.voice.session_context import set_current_organisation_id, set_current_company_id
+from services.voice.session_context import (
+    set_current_organisation_id,
+    set_current_company_id,
+    set_current_phone_number,
+)
 from langchain_core.messages import HumanMessage
 
 async def main():
@@ -19,6 +23,8 @@ async def main():
     comp_id = 1
     set_current_organisation_id(org_id)
     set_current_company_id(comp_id)
+    # Test harness: ensure profile tool has a session phone key.
+    set_current_phone_number("+910000000001")
     thread_id = str(uuid4())
     
     executor = await get_agent_executor(org_id, comp_id)

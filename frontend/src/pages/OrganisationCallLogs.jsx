@@ -15,7 +15,7 @@ export default function OrganisationCallLogs() {
     const [companies, setCompanies] = useState([]);
     const [loading, setLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
-    const [filterCompanyId, setFilterCompanyId] = useState('');
+    const [filterCompanyId, setFilterCompanyId] = useState('ALL');
 
     const [dateFilter, setDateFilter] = useState('week');
     const [farmerSearch, setFarmerSearch] = useState('');

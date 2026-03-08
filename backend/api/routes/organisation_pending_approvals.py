@@ -228,7 +228,7 @@ async def get_approval_stats(
                 User.role == "company",
                 User.status == "pending",
                 User.organisation_id == current_db_user.organisation_id,
-                Company.status.in_(["active", "pending", "inactive"])  # Only self-registered companies are set to active implicitly while user is pending
+                Company.status.in_(["active", "pending", "inactive"])
             )
         )
     )
@@ -243,8 +243,7 @@ async def get_approval_stats(
             and_(
                 User.role == "company",
                 User.status == "active",
-                User.organisation_id == current_db_user.organisation_id,
-                Company.notes == "self_registered"
+                User.organisation_id == current_db_user.organisation_id
             )
         )
     )
@@ -255,8 +254,7 @@ async def get_approval_stats(
         select(Company).where(
             and_(
                 Company.organisation_id == current_db_user.organisation_id,
-                Company.status == "rejected",
-                Company.notes == "self_registered"
+                Company.status == "rejected"
             )
         )
     )
@@ -285,7 +283,6 @@ async def get_approval_stats(
             and_(
                 Company.organisation_id == current_db_user.organisation_id,
                 Company.status == "rejected",
-                Company.notes == "self_registered",
                 Company.updated_at >= today
             )
         )
@@ -332,7 +329,6 @@ async def get_today_registrations(
                 User.organisation_id == current_db_user.organisation_id,
                 User.status.in_(["active", "pending"]),
                 Company.status.in_(["active", "pending", "inactive"]),
-                Company.notes == "self_registered",
                 User.created_at >= today
             )
         )
@@ -389,7 +385,6 @@ async def get_today_rejections(
                 User.role == "company",
                 User.organisation_id == current_db_user.organisation_id,
                 Company.status == "rejected",
-                Company.notes == "self_registered",
                 Company.updated_at >= today
             )
         )

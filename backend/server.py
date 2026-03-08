@@ -20,6 +20,7 @@ from api.routes import company_brands
 from api.routes import company_calls 
 from api.routes.organisations import brand_router, product_router
 from api.routes import exotel  
+from services.voice.post_call_summary import generate_post_call_summary
 
 # Voice bot components
 from langchain_core.runnables import RunnableGenerator
@@ -34,6 +35,10 @@ from services.voice.session_context import (
     reset_current_company_id,
     set_current_phone_number,
     reset_current_phone_number,
+    set_current_session_id,
+    reset_current_session_id,
+    set_current_farmer_row_id,
+    reset_current_farmer_row_id,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -145,6 +150,11 @@ async def conversation_endpoint(websocket: WebSocket):
     session_ctx_token = set_current_organisation_id(organisation_id)
     company_ctx_token = set_current_company_id(company_id)
     phone_ctx_token = set_current_phone_number(from_number)
+    farmer_row_ctx_token = set_current_farmer_row_id(None)
+    
+    import uuid
+    session_id = f"web_{uuid.uuid4().hex[:8]}"
+    session_id_token = set_current_session_id(session_id)
     
     logger.info(f"Client connected to /ws/conversation - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     
@@ -189,6 +199,8 @@ async def conversation_endpoint(websocket: WebSocket):
          reset_current_organisation_id(session_ctx_token)
          reset_current_company_id(company_ctx_token)
          reset_current_phone_number(phone_ctx_token)
+         reset_current_session_id(session_id_token)
+         reset_current_farmer_row_id(farmer_row_ctx_token)
          try:
              await websocket.close()
          except RuntimeError:
@@ -206,169 +218,227 @@ async def exotel_ws_endpoint(websocket: WebSocket):
     session_ctx_token = set_current_organisation_id(organisation_id)
     company_ctx_token = set_current_company_id(company_id)
     phone_ctx_token = set_current_phone_number(from_number)
+    farmer_row_ctx_token = set_current_farmer_row_id(None)
+    
+    import uuid
+    from datetime import datetime
+    session_id = f"exotel_{datetime.now().timestamp()}_{uuid.uuid4().hex[:8]}"
+    session_id_token = set_current_session_id(session_id)
     
     logger.info(f"Exotel connected to /ws/exotel - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     
     adapter = ExotelAdapter()
     call_active = True
-    
-    async def exotel_audio_stream():
-        nonlocal organisation_id, company_id, session_ctx_token, company_ctx_token, call_active
+    audio_queue: asyncio.Queue[tuple[str, str | bytes] | None] = asyncio.Queue(maxsize=256)
+
+    async def _queue_audio(chunk: bytes) -> None:
+        try:
+            audio_queue.put_nowait(("media", chunk))
+        except asyncio.QueueFull:
+            # Drop oldest frame to keep real-time behavior under backpressure.
+            try:
+                _ = audio_queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            audio_queue.put_nowait(("media", chunk))
+
+    async def _handle_start_event(message: str) -> None:
+        nonlocal organisation_id, company_id, session_ctx_token, company_ctx_token
+        nonlocal from_number, phone_ctx_token, farmer_row_ctx_token
+
+        try:
+            import json
+            data = json.loads(message)
+            custom_params = data.get("start", {}).get("custom_parameters", {})
+            cp_org_id = _parse_optional_int(custom_params.get("organisation_id") or custom_params.get("org_id"))
+            cp_company_id = _parse_optional_int(custom_params.get("company_id"))
+
+            changed = False
+            if cp_org_id and cp_org_id != organisation_id:
+                organisation_id = cp_org_id
+                reset_current_organisation_id(session_ctx_token)
+                session_ctx_token = set_current_organisation_id(organisation_id)
+                changed = True
+            if cp_company_id and cp_company_id != company_id:
+                company_id = cp_company_id
+                reset_current_company_id(company_ctx_token)
+                company_ctx_token = set_current_company_id(company_id)
+                changed = True
+            if changed:
+                logger.info(f"Context updated from custom_params: org={organisation_id}, company={company_id}")
+
+        except Exception as e:
+            logger.warning(f"Could not parse custom_parameters: {e}")
+
+        if not company_id:  # Only try to find company if not already set by custom_parameters
+            try:
+                from db.base import AsyncSessionLocal
+                from db.models.company import Company
+                from sqlalchemy import select, or_
+                async with AsyncSessionLocal() as db:
+                    found = False
+
+                    # Strategy 1: Look up company by the 'to' number (works if each company has unique ExoPhone)
+                    if adapter.to_number:
+                        phone_suffix = adapter.to_number[-10:] if len(adapter.to_number) >= 10 else adapter.to_number
+                        stmt = select(Company.id, Company.organisation_id).where(
+                            or_(
+                                Company.phone.like(f"%{phone_suffix}"),
+                                Company.secondary_phone.like(f"%{phone_suffix}")
+                            )
+                        )
+                        result = await db.execute(stmt)
+                        company_row = result.first()
+                        if company_row:
+                            db_company_id, db_org_id = company_row
+                            company_id = db_company_id
+                            reset_current_company_id(company_ctx_token)
+                            company_ctx_token = set_current_company_id(company_id)
+                            if not organisation_id:
+                                organisation_id = db_org_id
+                                reset_current_organisation_id(session_ctx_token)
+                                session_ctx_token = set_current_organisation_id(organisation_id)
+                            found = True
+                            logger.info(f"Context resolved from To number: org={organisation_id}, company={company_id}")
+
+                    # Strategy 3: Fallback to first company in DB (for testing / single-tenant)
+                    if not found:
+                        fallback_stmt = select(Company.id, Company.organisation_id).limit(1)
+                        fallback_result = await db.execute(fallback_stmt)
+                        fallback_row = fallback_result.first()
+                        if fallback_row:
+                            db_company_id, db_org_id = fallback_row
+                            company_id = db_company_id
+                            reset_current_company_id(company_ctx_token)
+                            company_ctx_token = set_current_company_id(company_id)
+                            if not organisation_id:
+                                organisation_id = db_org_id
+                                reset_current_organisation_id(session_ctx_token)
+                                session_ctx_token = set_current_organisation_id(organisation_id)
+                            logger.warning(f"FALLBACK: Using default company: org={organisation_id}, company={company_id}")
+            except Exception as e:
+                logger.error(f"Error looking up company by phone: {e}")
+
+        # Also update phone number if available in adapter
+        if adapter.from_number and adapter.from_number != from_number:
+            from_number = adapter.from_number
+            reset_current_phone_number(phone_ctx_token)
+            phone_ctx_token = set_current_phone_number(from_number)
+            reset_current_farmer_row_id(farmer_row_ctx_token)
+            farmer_row_ctx_token = set_current_farmer_row_id(None)
+            logger.info(f"Phone number updated from Exotel: {from_number}")
+
+        try:
+            from db.base import AsyncSessionLocal
+            from db.models.call_session import CallSession, CallStatus
+            from db.models.farmer import Farmer
+            from sqlalchemy import select
+            async with AsyncSessionLocal() as db:
+                farmer_id = None
+                if adapter.from_number:
+                    phone_search = adapter.from_number[-10:] if len(adapter.from_number) >= 10 else adapter.from_number
+                    farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
+                    farmer_result = await db.execute(farmer_stmt)
+                    farmer = farmer_result.scalars().first()
+                    if farmer:
+                        farmer_id = farmer.id
+                    else:
+                        new_farmer = Farmer(
+                            phone_number=adapter.from_number,
+                            name="Unknown Caller",
+                            language="hi"
+                        )
+                        db.add(new_farmer)
+                        await db.commit()
+                        await db.refresh(new_farmer)
+                        farmer_id = new_farmer.id
+                        logger.info(f"Created new Farmer {farmer_id} for number {adapter.from_number}")
+
+                new_call = CallSession(
+                    session_id=session_id,
+                    phone_number=from_number or adapter.from_number or "Unknown",
+                    provider_name="exotel",
+                    provider_call_id=adapter.call_sid,
+                    status=CallStatus.ACTIVE,
+                    organisation_id=organisation_id,
+                    from_phone=adapter.from_number,
+                    to_phone=adapter.to_number,
+                    exotel_call_sid=adapter.call_sid,
+                    call_direction="inbound",
+                    farmer_id=farmer_id
+                )
+                db.add(new_call)
+                await db.commit()
+                logger.info(f"Created CallSession for {adapter.call_sid} (Farmer ID: {farmer_id})")
+        except Exception as e:
+            logger.error(f"Error creating CallSession: {e}")
+
+    async def exotel_reader():
+        nonlocal call_active
         try:
             while call_active:
                 try:
-                    message = await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
+                    message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
                     event, pcm_bytes = adapter.parse_message(message)
-                    
+
                     if event == "connected":
                         continue
-
                     if event == "start":
                         try:
-                            import json
-                            data = json.loads(message)
-                            custom_params = data.get("start", {}).get("custom_parameters", {})
-                            cp_org_id = _parse_optional_int(custom_params.get("organisation_id") or custom_params.get("org_id"))
-                            cp_company_id = _parse_optional_int(custom_params.get("company_id"))
-                            
-                            changed = False
-                            if cp_org_id and cp_org_id != organisation_id:
-                                organisation_id = cp_org_id
-                                reset_current_organisation_id(session_ctx_token)
-                                session_ctx_token = set_current_organisation_id(organisation_id)
-                                changed = True
-                            if cp_company_id and cp_company_id != company_id:
-                                company_id = cp_company_id
-                                reset_current_company_id(company_ctx_token)
-                                company_ctx_token = set_current_company_id(company_id)
-                                changed = True
-                            if changed:
-                                logger.info(f"Context updated from custom_params: org={organisation_id}, company={company_id}")
-                            
-                        except Exception as e:
-                            logger.warning(f"Could not parse custom_parameters: {e}")
-                            
-                        if not company_id: # Only try to find company if not already set by custom_parameters
-                            try:
-                                from db.base import AsyncSessionLocal
-                                from db.models.company import Company
-                                from sqlalchemy import select, or_
-                                async with AsyncSessionLocal() as db:
-                                    found = False
-                                    
-                                    # Strategy 1: Look up company by the 'to' number (works if each company has unique ExoPhone)
-                                    if adapter.to_number:
-                                        phone_suffix = adapter.to_number[-10:] if len(adapter.to_number) >= 10 else adapter.to_number
-                                        stmt = select(Company.id, Company.organisation_id).where(
-                                            or_(
-                                                Company.phone.like(f"%{phone_suffix}"),
-                                                Company.secondary_phone.like(f"%{phone_suffix}")
-                                            )
-                                        )
-                                        result = await db.execute(stmt)
-                                        company_row = result.first()
-                                        if company_row:
-                                            db_company_id, db_org_id = company_row
-                                            company_id = db_company_id
-                                            reset_current_company_id(company_ctx_token)
-                                            company_ctx_token = set_current_company_id(company_id)
-                                            if not organisation_id:
-                                                organisation_id = db_org_id
-                                                reset_current_organisation_id(session_ctx_token)
-                                                session_ctx_token = set_current_organisation_id(organisation_id)
-                                            found = True
-                                            logger.info(f"Context resolved from To number: org={organisation_id}, company={company_id}")
-                                    
-                                    # Strategy 3: Fallback to first company in DB (for testing / single-tenant)
-                                    if not found:
-                                        fallback_stmt = select(Company.id, Company.organisation_id).limit(1)
-                                        fallback_result = await db.execute(fallback_stmt)
-                                        fallback_row = fallback_result.first()
-                                        if fallback_row:
-                                            db_company_id, db_org_id = fallback_row
-                                            company_id = db_company_id
-                                            reset_current_company_id(company_ctx_token)
-                                            company_ctx_token = set_current_company_id(company_id)
-                                            if not organisation_id:
-                                                organisation_id = db_org_id
-                                                reset_current_organisation_id(session_ctx_token)
-                                                session_ctx_token = set_current_organisation_id(organisation_id)
-                                            logger.warning(f"FALLBACK: Using default company: org={organisation_id}, company={company_id}")
-                            except Exception as e:
-                                logger.error(f"Error looking up company by phone: {e}")
-                        
-                        # Also update phone number if available in adapter
-                        if adapter.from_number:
-                            # Use nonlocal as these are defined in exotel_ws_endpoint
-                            nonlocal from_number, phone_ctx_token
-                            if adapter.from_number != from_number:
-                                from_number = adapter.from_number
-                                reset_current_phone_number(phone_ctx_token)
-                                phone_ctx_token = set_current_phone_number(from_number)
-                                logger.info(f"Phone number updated from Exotel: {from_number}")
-                        
-                        try:
-                            from db.base import AsyncSessionLocal
-                            from db.models.call_session import CallSession, CallStatus
-                            from db.models.farmer import Farmer
-                            from datetime import datetime, timezone
-                            from sqlalchemy import select
-                            async with AsyncSessionLocal() as db:
-                                farmer_id = None
-                                if adapter.from_number:
-                                    phone_search = adapter.from_number[-10:] if len(adapter.from_number) >= 10 else adapter.from_number
-                                    farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
-                                    farmer_result = await db.execute(farmer_stmt)
-                                    farmer = farmer_result.scalars().first()
-                                    if farmer:
-                                        farmer_id = farmer.id
-                                    else:
-                                        new_farmer = Farmer(
-                                            phone_number=adapter.from_number,
-                                            name="Unknown Caller",
-                                            language="hi"
-                                        )
-                                        db.add(new_farmer)
-                                        await db.commit()
-                                        await db.refresh(new_farmer)
-                                        farmer_id = new_farmer.id
-                                        logger.info(f"Created new Farmer {farmer_id} for number {adapter.from_number}")
-
-                                new_call = CallSession(
-                                    session_id=adapter.call_sid or f"exotel_{datetime.now().timestamp()}",
-                                    phone_number=from_number or adapter.from_number or "Unknown",
-                                    provider_name="exotel",
-                                    provider_call_id=adapter.call_sid,
-                                    status=CallStatus.ACTIVE,
-                                    organisation_id=organisation_id,
-                                    from_phone=adapter.from_number,
-                                    to_phone=adapter.to_number,
-                                    exotel_call_sid=adapter.call_sid,
-                                    call_direction="inbound",
-                                    farmer_id=farmer_id
-                                )
-                                db.add(new_call)
-                                await db.commit()
-                                logger.info(f"Created CallSession for {adapter.call_sid} (Farmer ID: {farmer_id})")
-                        except Exception as e:
-                            logger.error(f"Error creating CallSession: {e}")
-                        
+                            audio_queue.put_nowait(("start", message))
+                        except asyncio.QueueFull:
+                            pass
                         continue
-
                     if event == "stop":
+                        logger.info("Exotel sent stop event")
+                        try:
+                            audio_queue.put_nowait(("stop", ""))
+                        except asyncio.QueueFull:
+                            pass
                         call_active = False
                         break
-                        
                     if pcm_bytes:
-                        yield pcm_bytes
-                        
+                        await _queue_audio(pcm_bytes)
+
                 except asyncio.TimeoutError:
-                    yield b'\x00' * 1600
-                    
-        except WebSocketDisconnect:
+                    await _queue_audio(b"\x00" * 1600)
+                except WebSocketDisconnect:
+                    logger.info("Exotel websocket disconnected by peer")
+                    call_active = False
+                    break
+                except Exception as e:
+                    logger.error(f"Exotel reader error: {e}", exc_info=True)
+                    await asyncio.sleep(0.1)
+        finally:
             call_active = False
-        except Exception as e:
-            call_active = False
+            try:
+                audio_queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+
+    async def exotel_audio_stream():
+        nonlocal call_active
+        reader_task = asyncio.create_task(exotel_reader())
+        try:
+            while call_active or not audio_queue.empty():
+                item = await audio_queue.get()
+                if item is None:
+                    break
+                item_type, payload = item
+                if item_type == "start":
+                    await _handle_start_event(str(payload))
+                    continue
+                if item_type == "stop":
+                    call_active = False
+                    break
+                if item_type == "media":
+                    yield bytes(payload)
+        finally:
+            reader_task.cancel()
+            try:
+                await reader_task
+            except asyncio.CancelledError:
+                pass
 
     try:
         output_stream = pipeline.atransform(exotel_audio_stream())
@@ -394,6 +464,8 @@ async def exotel_ws_endpoint(websocket: WebSocket):
          reset_current_organisation_id(session_ctx_token)
          reset_current_company_id(company_ctx_token)
          reset_current_phone_number(phone_ctx_token)
+         reset_current_session_id(session_id_token)
+         reset_current_farmer_row_id(farmer_row_ctx_token)
          
          # Update CallSession to COMPLETED
          try:
@@ -411,6 +483,14 @@ async def exotel_ws_endpoint(websocket: WebSocket):
                              call_obj.duration_seconds = int((call_obj.end_time - call_obj.start_time).total_seconds())
                          await db.commit()
                          logger.info(f"Updated CallSession {adapter.call_sid} to COMPLETED")
+                         
+                         # Trigger post-call summarization
+                         asyncio.create_task(generate_post_call_summary(
+                             session_id=call_obj.session_id,
+                             provider_call_id=call_obj.provider_call_id,
+                             organisation_id=call_obj.organisation_id,
+                             company_id=company_id
+                         ))
          except Exception as e:
              logger.error(f"Error updating CallSession status: {e}")
 
