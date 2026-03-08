@@ -45,7 +45,12 @@ class Settings:
     GOOGLE_TTS_API_KEY: str = os.getenv('GOOGLE_TTS_API_KEY', '')
     
     # CORS
-    CORS_ORIGINS: str = os.getenv('CORS_ORIGINS', '*')
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        origins = os.getenv('CORS_ORIGINS', '*')
+        if origins == '*':
+            return ['*']
+        return [o.strip() for o in origins.split(',')]
     
     # RAG - Lower threshold to allow more direct answers
     CONFIDENCE_THRESHOLD: float = 0.60

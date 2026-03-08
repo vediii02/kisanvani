@@ -29,7 +29,17 @@ echo "PostgreSQL is up - starting migrations..."
 # Run migrations
 alembic upgrade head
 
-# Start Uvicorn with reload for development
-echo "Starting Uvicorn with reload..."
-exec uvicorn server:app --host 0.0.0.0 --port 8001 --reload --reload-dir /app
+# Start Server based on APP_ENV
+if [ "$APP_ENV" = "production" ]; then
+    echo "Starting Gunicorn in production mode..."
+    exec gunicorn server:app \
+        --workers 4 \
+        --worker-class uvicorn.workers.UvicornWorker \
+        --bind 0.0.0.0:8001 \
+        --timeout 120 \
+        --access-loglevel info
+else
+    echo "Starting Uvicorn with reload for development..."
+    exec uvicorn server:app --host 0.0.0.0 --port 8001 --reload --reload-dir /app
+fi
 

@@ -1303,7 +1303,9 @@ async def get_call_analytics(
     db: AsyncSession = Depends(get_db),
 ):
     """Get detailed call analytics"""
-    from datetime import date
+    from datetime import date, timedelta
+    from db.models.call_summary import CallSummary
+    from db.models.organisation import Organisation
     
     # Determine date range
     today = date.today()
@@ -1316,17 +1318,23 @@ async def get_call_analytics(
     else:
         start_date = None
     
-    # Base query
-    query = select(CallSession)
+    # Base query with Join for structured data
+    query = select(CallSession, CallSummary).outerjoin(
+        CallSummary, CallSession.id == CallSummary.call_session_id
+    )
+    
     if start_date:
         query = query.where(func.date(CallSession.created_at) >= start_date)
     if organisation_id:
         query = query.where(CallSession.organisation_id == organisation_id)
     
-    result = await db.execute(query)
-    calls = result.scalars().all()
+    # Order by newest first
+    query = query.order_by(desc(CallSession.created_at))
     
-    if not calls:
+    result = await db.execute(query)
+    rows = result.all()
+    
+    if not rows:
         return {
             "total_calls": 0,
             "avg_duration_seconds": 0,
@@ -1339,26 +1347,43 @@ async def get_call_analytics(
         }
     
     # Calculate metrics
-    total_calls = len(calls)
-    total_duration = sum([c.duration_seconds or 0 for c in calls])
+    total_calls = len(rows)
+    total_duration = sum([row[0].duration_seconds or 0 for row in rows])
     avg_duration = total_duration / total_calls if total_calls > 0 else 0
     
-    # Resolution rates (placeholder - would need actual data)
-    ai_resolved = sum([1 for c in calls if c.status == 'completed'])
+    # AI Resolution Rate = status is COMPLETED (case-insensitive)
+    ai_resolved = 0
+    for row in rows:
+        session = row[0]
+        status = session.status
+        status_str = status.value if hasattr(status, "value") else str(status)
+        if status_str.upper() == "COMPLETED":
+            ai_resolved += 1
+            
     ai_resolution_rate = (ai_resolved / total_calls * 100) if total_calls > 0 else 0
-    human_resolution_rate = 100 - ai_resolution_rate
+    human_resolution_rate = max(0, 100 - ai_resolution_rate)
     
-    # Top crops (from farmer_info JSON field or mocked for UI)
+    # Crop & Problem data extraction
     crop_counts = {}
-    for call in calls:
-        # Check if farmer_info exists on the model
-        if hasattr(call, 'farmer_info') and call.farmer_info and isinstance(call.farmer_info, dict):
-            crop = call.farmer_info.get('crop')
+    problem_counts = {}
+    
+    for session, summary in rows:
+        # 1. Farmer info on session
+        if hasattr(session, 'farmer_info') and session.farmer_info:
+            crop = session.farmer_info.get('crop')
             if crop:
                 crop_counts[crop] = crop_counts.get(crop, 0) + 1
-                
+        
+        # 2. Summary structured data
+        if summary:
+            if summary.target_crop:
+                crop_counts[summary.target_crop] = crop_counts.get(summary.target_crop, 0) + 1
+            
+            # Problems can be inferred from summary or recommendations (placeholders for now if not explicit)
+            # Future: Extract from summary.summary_text_english via LLM if not already structured
+            
+    # Format Top Crops
     if not crop_counts:
-        # Provide placeholder data if no crops were extracted from actual data
         top_crops = [
             {"crop": "Wheat", "count": int(total_calls * 0.4)},
             {"crop": "Rice", "count": int(total_calls * 0.3)},
@@ -1368,7 +1393,7 @@ async def get_call_analytics(
     else:
         top_crops = [{"crop": crop, "count": count} for crop, count in sorted(crop_counts.items(), key=lambda x: x[1], reverse=True)]
     
-    # Top problems (placeholder)
+    # Format Top Problems (still using placeholders but ready for extraction)
     top_problems = [
         {"problem": "Yellowing leaves", "count": int(total_calls * 0.3)},
         {"problem": "Pest attack", "count": int(total_calls * 0.25)},
@@ -1379,29 +1404,34 @@ async def get_call_analytics(
     
     # Calls by hour
     hour_counts = {}
-    for call in calls:
-        if call.created_at:
-            hour = call.created_at.hour
+    for row in rows:
+        session = row[0]
+        if session.created_at:
+            hour = session.created_at.hour
             hour_counts[hour] = hour_counts.get(hour, 0) + 1
     
     calls_by_hour = [{"hour": h, "count": hour_counts.get(h, 0)} for h in range(24)]
     
     # Organisation distribution
     org_counts = {}
-    for call in calls:
-        if call.organisation_id:
-            org_counts[call.organisation_id] = org_counts.get(call.organisation_id, 0) + 1
+    for row in rows:
+        session = row[0]
+        if session.organisation_id:
+            org_counts[session.organisation_id] = org_counts.get(session.organisation_id, 0) + 1
     
-    # Get organisation names
+    # Efficiently get organisation names
+    all_org_ids = list(org_counts.keys())
+    org_names = {}
+    if all_org_ids:
+        org_result = await db.execute(select(Organisation).where(Organisation.id.in_(all_org_ids)))
+        org_names = {o.id: o.name for o in org_result.scalars().all()}
+    
     org_distribution = []
     for org_id, count in org_counts.items():
-        org_result = await db.execute(select(Organisation).where(Organisation.id == org_id))
-        org = org_result.scalar_one_or_none()
-        if org:
-            org_distribution.append({
-                "organisation_name": org.name,
-                "call_count": count
-            })
+        org_distribution.append({
+            "organisation_name": org_names.get(org_id, f"Org {org_id}"),
+            "call_count": count
+        })
     
     return {
         "total_calls": total_calls,

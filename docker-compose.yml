@@ -53,15 +53,18 @@ services:
       PG_DATABASE: kisanvani
       DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@kisanvani_postgres:5432/kisanvani
       REDIS_URL: redis://redis:6379
-      CORS_ORIGINS: http://localhost:3001,http://34.47.250.57:3001,https://kisan.rechargestudio.com,http://kisan.rechargestudio.com
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      SARVAM_API_KEY: ${SARVAM_API_KEY}
+      GOOGLE_TTS_API_KEY: ${GOOGLE_TTS_API_KEY}
+      APP_ENV: ${APP_ENV:-development}
 
-      DEFAULT_STT_PROVIDER: "sarvam"
-      DEFAULT_TTS_PROVIDER: "sarvam"
-      DEFAULT_LLM_PROVIDER: "groq"
-      DEFAULT_LLM_MODEL: "llama3-70b-8192"
+      DEFAULT_STT_PROVIDER: ${DEFAULT_STT_PROVIDER:-sarvam}
+      DEFAULT_TTS_PROVIDER: ${DEFAULT_TTS_PROVIDER:-sarvam}
+      DEFAULT_LLM_PROVIDER: ${DEFAULT_LLM_PROVIDER:-groq}
+      DEFAULT_LLM_MODEL: ${DEFAULT_LLM_MODEL:-llama3-70b-8192}
 
       GOOGLE_APPLICATION_CREDENTIALS: /app/google-creds.json
-      BASE_URL: https://kisan.rechargestudio.com
+      BASE_URL: ${BASE_URL:-http://localhost:8001}
 
     depends_on:
       postgres:

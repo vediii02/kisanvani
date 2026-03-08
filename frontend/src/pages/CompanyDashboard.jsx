@@ -33,25 +33,8 @@ export default function CompanyDashboard() {
   const fetchDashboardStats = async () => {
     try {
       setLoading(true);
-
-      const [brandsRes, productsRes] = await Promise.all([
-        api.get('/company/brands'),
-        api.get('/company/products'),
-      ]);
-
-      const brands = brandsRes.data || [];
-      const products = productsRes.data || [];
-
-      setStats({
-        totalBrands: brands.length,
-        totalProducts: products.length,
-        activeBrands: brands.filter(b => b.is_active).length,
-        inactiveBrands: brands.filter(b => !b.is_active).length,
-        activeProducts: products.filter(p => p.is_active).length,
-        inactiveProducts: products.filter(p => !p.is_active).length,
-        totalCalls: 0,
-        recentQueries: 0
-      });
+      const response = await api.get('/company/stats');
+      setStats(response.data);
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
       toast.error('Failed to load dashboard statistics');

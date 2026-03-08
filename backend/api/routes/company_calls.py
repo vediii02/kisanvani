@@ -56,7 +56,10 @@ async def get_company_calls(
             
     target_company_id = company_id or filter_company_id
     
-    if target_company_id:
+    # Strategy: If org has only one company, we show all org calls for that company
+    if target_company_id and len(all_companies) == 1 and all_companies[0].id == target_company_id:
+        query = query.where(CallSession.organisation_id == org_id)
+    elif target_company_id:
         target_company = next((c for c in all_companies if c.id == target_company_id), None)
         
         if not target_company:
