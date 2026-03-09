@@ -300,7 +300,6 @@ async def update_company(
                 admin_user.full_name = company_input.name
             if company_input.email and str(company_input.email) != admin_user.email:
                 admin_user.email = str(company_input.email)
-                admin_user.username = str(company_input.email)
             if company_input.status:
                 admin_user.status = company_input.status
             db.add(admin_user)

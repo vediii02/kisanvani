@@ -32,8 +32,7 @@ export default function OrganisationCompanies() {
     max_products: 100,
     notes: '',
     username: '',
-    password: '',
-    login_email: ''
+    password: ''
   });
 
   useEffect(() => {
@@ -64,14 +63,10 @@ export default function OrganisationCompanies() {
       toast.error('Contact Email is required');
       return;
     }
-    if (!formData.login_email) {
-      toast.error('Login Email is required for login access');
+    if (!formData.username) {
+      toast.error('Username is required for login access');
       return;
     }
-    // if (formData.email !== formData.login_email) {
-    //   toast.error('Login Email must be the same as Contact Email');
-    //   return;
-    // }
     if (!formData.password) {
       toast.error('Password is required for login access');
       return;
@@ -83,12 +78,8 @@ export default function OrganisationCompanies() {
 
     setLoading(true);
     try {
-      const submitData = { ...formData };
-      submitData.username = formData.login_email; // Username = Email
-      delete submitData.login_email;
-
-      await api.post('/organisation/companies', submitData);
-      toast.success('Company and user account created successfully! Login with email: ' + formData.email);
+      await api.post('/organisation/companies', formData);
+      toast.success('Company and user account created successfully! Login with username: ' + formData.username);
       setShowCreateModal(false);
       resetForm();
       fetchCompanies();
@@ -207,7 +198,6 @@ export default function OrganisationCompanies() {
       max_products: company.max_products || 100,
       username: company.username || '',
       password: '', // Don't pre-fill password in edit for security
-      login_email: company.email || '' // Usually email is username
     });
     setShowEditModal(true);
   };
@@ -228,8 +218,7 @@ export default function OrganisationCompanies() {
       pincode: '',
       notes: '',
       username: '',
-      password: '',
-      login_email: ''
+      password: ''
     });
   };
 
@@ -558,7 +547,7 @@ export default function OrganisationCompanies() {
 
               <div className="space-y-4 pl-6 border-l-2 border-primary/20">
                 <p className="text-sm text-muted-foreground mb-3">
-                  Company will be able to login using their email address
+                  Company will be able to login using their unique username
                 </p>
                 <div className="space-y-3">
                   <div>
