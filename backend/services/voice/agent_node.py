@@ -5,7 +5,16 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
-from services.voice.events import VoiceAgentEvent, AgentChunkEvent, HangupEvent
+from services.voice.events import (
+    VoiceAgentEvent, 
+    AgentChunkEvent, 
+    HangupEvent, 
+    STTOutputEvent, 
+    STTInterimEvent, 
+    STTChunkEvent, 
+    BargeInEvent, 
+    CallStartedEvent
+)
 from services.voice.llm import get_agent_executor
 from services.voice.logger import setup_logger
 from services.voice.session_context import get_current_organisation_id, get_current_company_id, get_current_session_id
@@ -19,15 +28,7 @@ BARGE_IN_GRACE_PERIOD = 0.4
 async def agent_stream(
     event_stream: AsyncIterator[VoiceAgentEvent],
 ) -> AsyncIterator[VoiceAgentEvent]:
-    """
-    Transform stream: STT Events → Agent Response Events
-
-    Handles:
-    - Auto-greeting on call start (sends __CALL_STARTED__ to agent)
-    - Multi-turn conversation with memory
-    - Barge-in (cancel current AI response) with grace period
-    - Sentence-level chunking for TTS
-    """
+    logger.info("AGENT_STREAM: ENTRY")
     thread_id = get_current_session_id() or str(uuid4())
     output_queue: asyncio.Queue = asyncio.Queue()
     
@@ -234,8 +235,13 @@ async def agent_stream(
                     else:
                         event = await anext(event_iter)
                         
+                    if event:
+                        logger.info(f"AGENT_STREAM: RECEIVED upstream event: type={event.type}")
+                    else:
+                        logger.warning("Received NULL event from upstream!")
+                        continue
+                        
                     # We received an event from STT (background noise, stt_chunk, etc)
-                    # We only reset the timeout if it's actual speech output or start
                     if getattr(event, "type", "") in ["stt_output", "stt_chunk", "call_started"]:
                         consecutive_timeouts = 0
 

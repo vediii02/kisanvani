@@ -43,6 +43,8 @@ class SarvamSTT:
         self._vad_frame_size = 480 
         
         self._closed = False
+        self._chunk_log_counter = 0
+        self._vad_log_counter = 0
 
     async def _mark_disconnected(self):
         async with self._conn_lock:
@@ -94,9 +96,8 @@ class SarvamSTT:
                 return
             
             # append to buffer
-            if not hasattr(self, "_chunk_log_counter"): self._chunk_log_counter = 0
             self._chunk_log_counter += 1
-            if self._chunk_log_counter % 50 == 0:
+            if self._chunk_log_counter % 20 == 0:
                 logger.debug(f"Received audio chunk: len={len(audio_chunk)}")
                 
             self._audio_buffer.extend(audio_chunk)
@@ -166,7 +167,7 @@ class SarvamSTT:
                                 # Fallback to punctuation detection
                                 is_final = any(p in transcript for p in ["।", ".", "?", "!"])
 
-                            logger.info(f"Raw: {transcript} (final={is_final})")
+                            logger.info(f"STT Result: {transcript} (final={is_final})")
 
                             # Only yield BargeIn if intent is detected (at least 2 words or long enough)
                             words = transcript.strip().split()
@@ -223,9 +224,11 @@ class SarvamSTT:
 async def stt_stream(
     audio_stream: AsyncIterator[bytes],
 ) -> AsyncIterator[VoiceAgentEvent]:
+    logger.info("STT_STREAM: ENTRY")
     # Yield CallStartedEvent IMMEDIATELY to kick off the pipeline chain
-    # Without this, agent_stream never starts because silence produces no STT events
-    yield CallStartedEvent.create()
+    ev = CallStartedEvent.create()
+    logger.info(f"STT_STREAM: YIELDING {ev.type}")
+    yield ev
 
     config = await get_platform_config()
     stt_provider = config.get("stt_provider", "sarvam")
