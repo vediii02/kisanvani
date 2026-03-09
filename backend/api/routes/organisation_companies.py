@@ -395,7 +395,6 @@ async def update_company(
             admin_user.full_name = company_data.name
         if company_data.email is not None and company_data.email != admin_user.email:
             admin_user.email = company_data.email
-            admin_user.username = company_data.email
         if company_data.status is not None:
             admin_user.status = company_data.status
         db.add(admin_user)
