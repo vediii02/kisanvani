@@ -1,6 +1,8 @@
 import os
 import uuid
 import re
+import asyncio
+import time
 from typing import Any
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -12,7 +14,11 @@ from sqlalchemy import select
 
 from db.base import AsyncSessionLocal
 from db.models.knowledge_base import KnowledgeEntry
-from services.voice.session_context import get_current_organisation_id, get_current_company_id
+from services.voice.session_context import (
+    get_current_organisation_id,
+    get_current_company_id,
+    get_current_session_id,
+)
 from services.config_service import get_platform_config
 
 load_dotenv()
@@ -40,6 +46,7 @@ def _create_openai_llm():
         model="gpt-4o-mini",
         temperature=0.1,
         api_key=openai_api_key,
+        request_timeout=3.0,
     )
 
 def _create_gemini_llm():
@@ -60,7 +67,7 @@ async def get_llm():
         config = await get_platform_config()
         provider = config.get("llm_model", "groq")
         if provider == "openai":
-            logger.info("Using OpenAI (GPT-4o) as LLM provider")
+            logger.info("Using OpenAI (gpt-4o-mini) as LLM provider")
             return _create_openai_llm()
         elif provider == "gemini":
             logger.info("Using Google (Gemini 2.0 Flash) as LLM provider")
@@ -72,9 +79,14 @@ async def get_llm():
         logger.error(f"Failed to get LLM from config, using default Groq: {e}")
         return _create_groq_llm()
 
-openai_client = AsyncOpenAI(api_key=openai_api_key)
+openai_client = AsyncOpenAI(api_key=openai_api_key, timeout=3.0)
 
-_agent_cache: dict[tuple[int | None, int | None], Any] = {}
+_agent_cache: dict[tuple[int | None, int | None, str], Any] = {}
+
+# Simple in‑memory caches to avoid recomputing expensive operations
+_embedding_cache: dict[tuple[str, str], list[float]] = {}
+# Keyed by (session_id, query)
+_prefetched_kb: dict[tuple[str | None, str], str] = {}
 
 # Postgres-backed conversation memory
 _pg_host = os.getenv("PG_HOST", "localhost")
@@ -119,17 +131,38 @@ async def _fetch_query_embedding_openai(query: str) -> list[float]:
     return response.data[0].embedding
 
 async def fetch_embedding(text: str) -> list[float]:
+    """Fetch (and cache) an embedding for the given text."""
+    provider_tag = "openai"
     try:
         config = await get_platform_config()
         provider = config.get("llm_model", "groq")
         if provider == "gemini":
+            provider_tag = "gemini"
             logger.info("Using Google Gemini for embeddings")
-            return await _fetch_query_embedding_google(text)
+            cache_key = (provider_tag, text)
+            if cache_key in _embedding_cache:
+                return _embedding_cache[cache_key]
+            start = time.monotonic()
+            vec = await _fetch_query_embedding_google(text)
+            duration = (time.monotonic() - start) * 1000
+            logger.info("Embedding latency (gemini): %.2fms (len=%d)", duration, len(text))
+            _embedding_cache[cache_key] = vec
+            return vec
     except Exception as e:
         logger.error(f"Failed to get PlatformConfig for embedding dict, falling back to OpenAI: {e}")
     
+    provider_tag = "openai"
+    cache_key = (provider_tag, text)
+    if cache_key in _embedding_cache:
+        return _embedding_cache[cache_key]
+
     logger.info("Using OpenAI text-embedding-3-small for embeddings")
-    return await _fetch_query_embedding_openai(text)
+    start = time.monotonic()
+    vec = await _fetch_query_embedding_openai(text)
+    duration = (time.monotonic() - start) * 1000
+    logger.info("Embedding latency (openai): %.2fms (len=%d)", duration, len(text))
+    _embedding_cache[cache_key] = vec
+    return vec
 
 
 async def _pgvector_search(
@@ -140,7 +173,9 @@ async def _pgvector_search(
     organisation_id: int,
     company_id: int | None = None,
 ) -> list[KnowledgeEntry]:
+    embed_start = time.monotonic()
     query_vector = await fetch_embedding(query)
+    embed_ms = (time.monotonic() - embed_start) * 1000
 
     async with AsyncSessionLocal() as db:
         filters = [
@@ -158,7 +193,18 @@ async def _pgvector_search(
         stmt = stmt.order_by(
             KnowledgeEntry.embedding.cosine_distance(query_vector)
         ).limit(limit)
+
+        db_start = time.monotonic()
         result = await db.execute(stmt)
+        db_ms = (time.monotonic() - db_start) * 1000
+        logger.info(
+            "RAG timings: embedding=%.2fms, pgvector=%.2fms (limit=%d, org_id=%s, company_id=%s)",
+            embed_ms,
+            db_ms,
+            limit,
+            organisation_id,
+            company_id,
+        )
         return list(result.scalars().all())
 
 
@@ -198,7 +244,13 @@ async def retrieve_context(query: str, organisation_id: int | None = None, compa
     threshold = (100 - rag_min_conf) / 100.0
 
     try:
-        docs = await _pgvector_search(query, limit=rag_limit, threshold=threshold, organisation_id=resolved_org_id, company_id=resolved_comp_id)
+        docs = await _pgvector_search(
+            query,
+            limit=rag_limit,
+            threshold=threshold,
+            organisation_id=resolved_org_id,
+            company_id=resolved_comp_id,
+        )
         if not docs:
             return "No relevant information found in the knowledge base."
 
@@ -618,8 +670,34 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         # Hard guard: do not allow advisory to proceed without KB retrieval.
         if not _recent_has_retrieval(raw_messages):
             forced_query = _build_retrieval_query(raw_messages)
+            words = forced_query.split()
+
+            # If the farmer's description is still very short, stay in a
+            # diagnostic-style flow instead of paying full RAG cost.
+            if len(words) < 4:
+                logger.info(
+                    "Skipping RAG for very short advisory query (%d words). Staying diagnostic.",
+                    len(words),
+                )
+                prompt = BASE_RULES + lang_rules + DIAGNOSTIC_PROMPT + HANGUP_RULES
+                messages = [SystemMessage(content=prompt)] + raw_messages
+                response = await advisory_llm.ainvoke(messages)
+                return {"messages": [response], "stage": "diagnostic"}
+
             logger.info("Forcing retrieve_context before advisory response: query=%r", forced_query)
-            kb_context = await _retrieve_context_direct(query=forced_query)
+
+            # Try to reuse any prefetched KB context for this session/query.
+            session_id = get_current_session_id()
+            kb_context: str | None = None
+            pref_key = (session_id, forced_query)
+            if pref_key in _prefetched_kb:
+                kb_context = _prefetched_kb.pop(pref_key)
+                logger.info("Using prefetched KB context for session=%s", session_id)
+            else:
+                rag_start = time.monotonic()
+                kb_context = await _retrieve_context_direct(query=forced_query)
+                rag_ms = (time.monotonic() - rag_start) * 1000
+                logger.info("On-demand RAG retrieve_context latency: %.2fms", rag_ms)
 
             if (
                 "No relevant information found in the knowledge base." in kb_context
@@ -697,9 +775,40 @@ Return ONLY ONE word: 'greeting', 'profiling', 'diagnostic', or 'advisory'."""
         try:
             route_decision = await current_llm.ainvoke([router_sys] + chat_history_for_router[-5:]) # Look at recent text context
             choice = route_decision.content.strip().lower()
-            if "advisory" in choice: return "advisory"
-            if "diagnostic" in choice: return "diagnostic"
-            if "profiling" in choice: return "profiling"
+            if "advisory" in choice:
+                # Proactively start a background RAG prefetch so that by the
+                # time advisory_node runs, we likely already have KB context.
+                forced_query = _build_retrieval_query(messages)
+                session_id = get_current_session_id()
+                pref_key = (session_id, forced_query)
+
+                if forced_query and pref_key not in _prefetched_kb:
+                    async def _prefetch():
+                        try:
+                            logger.info(
+                                "Prefetching retrieve_context for session=%s query=%r",
+                                session_id,
+                                forced_query,
+                            )
+                            rag_start = time.monotonic()
+                            kb_ctx = await _retrieve_context_direct(query=forced_query)
+                            rag_ms = (time.monotonic() - rag_start) * 1000
+                            _prefetched_kb[pref_key] = kb_ctx
+                            logger.info(
+                                "Prefetch retrieve_context done in %.2fms for session=%s",
+                                rag_ms,
+                                session_id,
+                            )
+                        except Exception as e:
+                            logger.error("Prefetch retrieve_context failed: %s", e, exc_info=True)
+
+                    asyncio.create_task(_prefetch())
+
+                return "advisory"
+            if "diagnostic" in choice:
+                return "diagnostic"
+            if "profiling" in choice:
+                return "profiling"
             return "greeting"
         except Exception as e:
             logger.error(f"Routing error: {e}")

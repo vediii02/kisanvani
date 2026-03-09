@@ -149,8 +149,9 @@ class SarvamSTT:
                 while not self._closed:
                     try:
                         # Sarvam STT receiver loop
-                        # Increased timeout to 1.1s to allow natural farmer pauses as per the optimized plan
-                        message = await asyncio.wait_for(ws.recv(), timeout=1.1)
+                        # Slightly under 1s to keep end-to-end TTFB low while
+                        # still allowing natural short pauses.
+                        message = await asyncio.wait_for(ws.recv(), timeout=0.9)
 
                         data = getattr(message, "data", None)
                         if data and hasattr(data, "transcript"):
@@ -189,9 +190,9 @@ class SarvamSTT:
                             logger.info(f"Unknown Msg: {message}")
 
                     except asyncio.TimeoutError:
-                        # User stopped speaking for 1.1s. If we have pending text, make it final
+                        # User stopped speaking for ~0.9s. If we have pending text, make it final
                         if pending_transcript:
-                            logger.info(f"Silence timeout (1.1s). Flushing as final: {pending_transcript}")
+                            logger.info(f"Silence timeout (0.9s). Flushing as final: {pending_transcript}")
                             yield STTOutputEvent.create(transcript=pending_transcript)
                             pending_transcript = ""
                             last_yielded_transcript = ""  # Reset so next utterance isn't skipped if identical

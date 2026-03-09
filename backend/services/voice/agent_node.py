@@ -34,6 +34,7 @@ async def agent_stream(
     
     # Active response management
     current_ai_task: asyncio.Task | None = None
+    # Used only for barge‑in grace period, NOT for TTFB
     ai_response_start_time: float = 0.0
     
     # Speculative execution state
@@ -49,7 +50,8 @@ async def agent_stream(
     async def generate_ai_response(text: str, speculative: bool = False):
         """Stream LLM response into the shared output queue, chunked by sentence."""
         nonlocal thread_id
-        # ... (rest of the logic updated above in other chunks)
+        # Per-task start time for accurate TTFB measurement
+        response_start_time = time.monotonic()
         ttfb_logged = False
         try:
             stream = session_agent_executor.astream(
@@ -108,7 +110,9 @@ async def agent_stream(
                             sentence = current_sentence.strip()
                             if sentence:
                                 if not ttfb_logged:
-                                    ttfb = (time.monotonic() - ai_response_start_time) * 1000
+                                    # Measure TTFB from when THIS task started,
+                                    # so speculative / previous tasks don't inflate it.
+                                    ttfb = (time.monotonic() - response_start_time) * 1000
                                     logger.info(f"TTFB (Time to First Byte): {ttfb:.2f}ms")
                                     ttfb_logged = True
                                     
