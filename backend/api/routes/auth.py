@@ -7,6 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import logging
 import secrets
+import smtplib
+import asyncio
+from email.message import EmailMessage
 
 from core.auth import (
     get_password_hash,
@@ -19,6 +22,7 @@ from db.session import get_db
 from db.models.user import User
 from db.models.organisation import Organisation
 from db.models.company import Company
+from core.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=[" authentication"])
@@ -484,11 +488,65 @@ async def forgot_password(request: ForgotPasswordRequest, db: AsyncSession = Dep
     await db.commit()
     
     # SIMULATION: Log the reset link since no SMTP is configured
+    # We will send the actual email now.
     reset_link = f"http://localhost:3001/reset-password/{token}"
     logger.info(f"PASSWORD RESET REQUEST for {user.username}: {reset_link}")
-    print(f"\n*** PASSWORD RESET LINK: {reset_link} ***\n")
     
-    return {"message": "Password reset instructions sent to your email (Simulated: Check console/logs)"}
+    if settings.SMTP_USER and settings.SMTP_PASS:
+        try:
+            message = EmailMessage()
+            message["From"] = settings.SMTP_USER
+            message["To"] = request.email
+            message["Subject"] = "Password Reset Request - Kisan Vani AI"
+            
+            # HTML email body
+            body = f"""
+            <html>
+                <body>
+                    <h2>Password Reset Request</h2>
+                    <p>Hello {user.full_name or user.username},</p>
+                    <p>We received a request to reset your password for Kisan Vani AI.</p>
+                    <p>Click the link below to reset your password. This link will expire in 1 hour.</p>
+                    <p><a href="{reset_link}" style="background-color:#16a34a;color:white;padding:10px 20px;text-decoration:none;border-radius:5px;display:inline-block;">Reset Password</a></p>
+                    <p>If you didn't request this, you can safely ignore this email.</p>
+                    <p>Best regards,<br>The Kisan Vani AI Team</p>
+                </body>
+            </html>
+            """
+            
+            message.set_content(
+                f"Please reset your password using the following link: {reset_link}"
+            )
+            message.add_alternative(body, subtype="html")
+            
+            def _send_email():
+                # Force IPv4 to bypass potential broken IPv6 routing
+                import socket
+                try:
+                    addr_info = socket.getaddrinfo(settings.SMTP_HOST, settings.SMTP_PORT, socket.AF_INET, socket.SOCK_STREAM)
+                    smtp_target = addr_info[0][4][0]
+                    logger.info(f"Connecting to SMTP {settings.SMTP_HOST} via IPv4 {smtp_target}")
+                except Exception as e:
+                    logger.warning(f"Failed to force IPv4 for {settings.SMTP_HOST}: {e}. Falling back to hostname.")
+                    smtp_target = settings.SMTP_HOST
+
+                server = smtplib.SMTP(smtp_target, settings.SMTP_PORT, timeout=30)
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(settings.SMTP_USER, settings.SMTP_PASS)
+                server.send_message(message)
+                server.quit()
+            
+            await asyncio.to_thread(_send_email)
+            logger.info(f"Password reset email sent to {request.email}")
+            return {"message": "Password reset instructions sent to your email"}
+        except Exception as e:
+            logger.error(f"Failed to send email to {request.email}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to send password reset email. Please try again later.")
+    else:
+        print(f"\n*** PASSWORD RESET LINK: {reset_link} ***\n")
+        return {"message": "Password reset instructions sent to your email (Simulated: Check console/logs)"}
 
 @router.post("/reset-password")
 async def reset_password(request: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):

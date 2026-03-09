@@ -410,3 +410,55 @@ async def get_today_rejections(
         "total": len(rejections)
     }
 
+# ============================================================================
+# GET: All Registrations (All Time, Organisation Level)
+# ============================================================================
+
+@router.get("/all-registrations")
+async def get_all_registrations(
+    current_user: dict = Depends(verify_organisation_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all company user registrations for this organisation for all time"""
+    
+    # Get current user's organisation
+    user_result = await db.execute(
+        select(User).where(User.username == current_user["username"])
+    )
+    current_db_user = user_result.scalar_one_or_none()
+    
+    if not current_db_user or not current_db_user.organisation_id:
+        raise HTTPException(status_code=404, detail="Organisation not found")
+        
+    result = await db.execute(
+        select(User, Company)
+        .join(Company, User.company_id == Company.id)
+        .where(
+            and_(
+                User.role == "company",
+                User.organisation_id == current_db_user.organisation_id,
+                Company.status.in_(["active", "pending", "inactive", "rejected"])
+            )
+        )
+        .order_by(User.created_at.desc())
+    )
+    
+    registrations = []
+    for user, company in result.all():
+        registrations.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "company_name": company.name,
+            "company_id": company.id,
+            "is_active": user.status == "active",
+            "company_status": company.status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        })
+    
+    return {
+        "all_registrations": registrations,
+        "total": len(registrations)
+    }

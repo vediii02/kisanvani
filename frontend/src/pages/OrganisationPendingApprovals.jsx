@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
-import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye, UserPlus, Ban, UserCheck } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, Building2, User, Mail, Calendar, Eye, UserPlus, Ban, UserCheck, History } from 'lucide-react';
 import api from '@/api/api';
 
 export default function OrganisationPendingApprovals() {
@@ -12,6 +12,7 @@ export default function OrganisationPendingApprovals() {
   const [approvals, setApprovals] = useState([]);
   const [todayRegistrations, setTodayRegistrations] = useState([]);
   const [todayRejections, setTodayRejections] = useState([]);
+  const [allRegistrations, setAllRegistrations] = useState([]);
   const [processing, setProcessing] = useState({});
   const [stats, setStats] = useState({
     pending_count: 0,
@@ -27,6 +28,7 @@ export default function OrganisationPendingApprovals() {
     fetchApprovalStats();
     fetchTodayRegistrations();
     fetchTodayRejections();
+    fetchAllRegistrations();
   }, []);
 
   const fetchPendingApprovals = async () => {
@@ -72,6 +74,16 @@ export default function OrganisationPendingApprovals() {
     }
   };
 
+  const fetchAllRegistrations = async () => {
+    try {
+      const response = await api.get('/organisation/all-registrations');
+      setAllRegistrations(response.data.all_registrations || []);
+    } catch (error) {
+      console.error('Error fetching all registrations:', error);
+      toast.error('Failed to load all registrations');
+    }
+  };
+
   const handleApprove = async (userId) => {
     try {
       setProcessing(prev => ({ ...prev, [userId]: true }));
@@ -85,6 +97,7 @@ export default function OrganisationPendingApprovals() {
       await fetchApprovalStats();
       await fetchTodayRegistrations();
       await fetchTodayRejections();
+      await fetchAllRegistrations();
 
       toast.success('User approved successfully!');
     } catch (error) {
@@ -108,6 +121,7 @@ export default function OrganisationPendingApprovals() {
       await fetchApprovalStats();
       await fetchTodayRegistrations();
       await fetchTodayRejections();
+      await fetchAllRegistrations();
 
       toast.success('User rejected successfully!');
     } catch (error) {
@@ -427,7 +441,7 @@ export default function OrganisationPendingApprovals() {
       </Card>
 
       {/* Today's Rejected Users Table */}
-      <Card>
+      <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Ban className="h-5 w-5 text-red-600" />
@@ -495,6 +509,80 @@ export default function OrganisationPendingApprovals() {
                         <XCircle className="h-3 w-3 mr-1" />
                         Rejected
                       </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* All Time Registrations Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <History className="h-5 w-5 text-purple-600" />
+            All Registrations
+          </CardTitle>
+          <CardDescription>
+            All company user registrations for all time
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {allRegistrations.length === 0 ? (
+            <div className="text-center py-8">
+              <History className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Registrations</h3>
+              <p className="text-muted-foreground">No registrations have been recorded yet.</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>User Details</TableHead>
+                  <TableHead>Companies</TableHead>
+                  <TableHead>Registration Time</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {allRegistrations.map((reg) => (
+                  <TableRow key={reg.id}>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <User className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-bold text-gray-900">
+                            {reg.full_name || reg.username}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Mail className="h-3 w-3" />
+                          <span>{reg.email}</span>
+                        </div>
+                        {reg.full_name && (
+                          <div className="text-xs text-muted-foreground ml-6">
+                            @{reg.username}
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <div className="font-medium text-gray-900">{reg.company_name}</div>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wider font-bold bg-gray-50">
+                          {reg.role.replace('_', ' ')}
+                        </Badge>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm">
+                        {formatDate(reg.created_at)}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(reg.company_status, reg.is_active)}
                     </TableCell>
                   </TableRow>
                 ))}

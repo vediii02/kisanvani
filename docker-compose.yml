@@ -4,12 +4,11 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: kisanvani_postgres
+    network_mode: host
     environment:
       POSTGRES_PASSWORD: rootpassword
       POSTGRES_DB: kisanvani
       POSTGRES_USER: kisanvani
-    ports:
-      - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -17,14 +16,11 @@ services:
       interval: 10s
       timeout: 20s
       retries: 10
-    networks:
-      - kisanvani_network
 
   redis:
     image: redis:7-alpine
     container_name: kisanvani_redis
-    ports:
-      - "6380:6379"
+    network_mode: host
     volumes:
       - redis_data:/data
     healthcheck:
@@ -32,27 +28,24 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    networks:
-      - kisanvani_network
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: kisanvani_backend
-    ports:
-      - "8001:8001"
+    network_mode: host
     env_file:
       - .env
 
     environment:
-      PG_HOST: kisanvani_postgres
+      PG_HOST: localhost
       PG_PORT: 5432
       PG_USER: kisanvani
       PG_PASSWORD: rootpassword
       PG_DATABASE: kisanvani
-      DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@kisanvani_postgres:5432/kisanvani
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@localhost:5432/kisanvani
+      REDIS_URL: redis://localhost:6379
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       SARVAM_API_KEY: ${SARVAM_API_KEY}
       GOOGLE_TTS_API_KEY: ${GOOGLE_TTS_API_KEY}
@@ -83,10 +76,6 @@ services:
       retries: 5
       start_period: 40s
 
-    networks:
-      - kisanvani_network
-
-    # 👇 IMPORTANT FIX — migrate DB then run uvicorn
     command: >
       bash /app/prestart.sh
 
@@ -95,8 +84,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: kisanvani_frontend
-    ports:
-      - "3001:3001"
+    network_mode: host
     environment:
       PORT: 3001
       REACT_APP_BACKEND_URL: /api
@@ -108,32 +96,24 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 3001"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 40s
-    networks:
-      - kisanvani_network
 
   pgadmin:
     image: dpage/pgadmin4
     container_name: kisanvani_pgadmin
-    ports:
-      - "8081:80"
+    network_mode: host
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: root
     depends_on:
       - postgres
-    networks:
-      - kisanvani_network
 
 volumes:
   pgdata:
   redis_data:
-
-networks:
-  kisanvani_network:
-    driver: bridge

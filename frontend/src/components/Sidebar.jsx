@@ -39,11 +39,11 @@ export default function Sidebar() {
     { path: '/superadmin/brands', icon: Tag, label: 'Brands', testid: 'nav-admin-brands' },
     { path: '/superadmin/products', icon: Package, label: 'Products', testid: 'nav-admin-products' },
     // { path: '/superadmin/platform', icon: Globe, label: 'Platform Dashboard', testid: 'nav-admin-platform' },
+    { path: '/superadmin/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-admin-audit' },
     { path: '/superadmin/call-analytics', icon: BarChart3, label: 'Call Analytics', testid: 'nav-admin-analytics' },
     { path: '/superadmin/ai-management', icon: Brain, label: 'AI Management', testid: 'nav-admin-ai' },
 
     // { path: '/superadmin/product-safety', icon: AlertTriangle, label: 'Product Safety', testid: 'nav-admin-safety' },
-    { path: '/superadmin/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-admin-audit' },
     // { path: '/superadmin/kb-governance', icon: Database, label: 'KB Governance', testid: 'nav-admin-kb' },
     { path: '/superadmin/settings', icon: Settings, label: 'Settings', testid: 'nav-admin-settings' },
   ];
@@ -75,7 +75,7 @@ export default function Sidebar() {
         <p className="text-sm opacity-80 mt-1">Voice Advisory Platform</p>
       </div>
 
-      <nav className="px-3 mt-4 flex-1 overflow-y-auto">
+      <nav className="px-3 mt-4 flex-1 overflow-y-auto scrollbar-hide">
         {user?.role === 'supervisor' && menuItems.map((item) => {
           const Icon = item.icon;
           return (

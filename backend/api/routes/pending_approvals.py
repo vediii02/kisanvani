@@ -328,3 +328,45 @@ async def get_today_rejections(
         "total": len(rejections)
     }
 
+# ============================================================================
+# GET: All Registrations (All Time)
+# ============================================================================
+
+@router.get("/all-registrations")
+async def get_all_registrations(
+    current_user: dict = Depends(verify_superadmin_role),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all organisation registrations for all time"""
+    
+    result = await db.execute(
+        select(User, Organisation)
+        .join(Organisation, User.organisation_id == Organisation.id)
+        .where(
+            and_(
+                User.role == "organisation",
+                Organisation.status.in_(["active", "pending", "inactive", "rejected"])
+            )
+        )
+        .order_by(User.created_at.desc())
+    )
+    
+    registrations = []
+    for user, organisation in result.all():
+        registrations.append({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "organisation_name": organisation.name,
+            "organisation_id": organisation.id,
+            "is_active": user.status == "active",
+            "org_status": organisation.status,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        })
+    
+    return {
+        "all_registrations": registrations,
+        "total": len(registrations)
+    }

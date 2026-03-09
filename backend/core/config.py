@@ -55,4 +55,10 @@ class Settings:
     # RAG - Lower threshold to allow more direct answers
     CONFIDENCE_THRESHOLD: float = 0.60
 
+    # SMTP Settings
+    SMTP_HOST: str = os.getenv('SMTP_HOST', 'smtp.gmail.com')
+    SMTP_PORT: int = int(os.getenv('SMTP_PORT', '587'))
+    SMTP_USER: str = os.getenv('SMTP_USER', '')
+    SMTP_PASS: str = os.getenv('SMTP_PASS', '')
+
 settings = Settings()
