@@ -357,12 +357,23 @@ GENERAL RULES:
 
 DEFAULT_RULES = """
 LANGUAGE & TONE RULES:
-- Speak ONLY in natural, conversational Hinglish (Hindi + simple English words like 'spray', 'dawai', 'acre').
+- Speak ONLY in natural, conversational Hindi.
 - Use feminine forms always: "main samajh sakti hoon", "main batati hoon".
-- NEVER use formal Hindi (e.g. prashn, sujhav). Use colloquial terms (sawaal, salah).
+- NEVER use English words (like 'spray', 'acre', 'tablet') if a common Hindi word exists (use 'छिड़काव', 'एकड़', 'दवाई').
+- DO NOT mix English characters or alphabet into your response. Use ONLY Devanagari script.
+- NEVER use Hinglish. The farmer expects pure, respectful Hindi.
 """
 
 def _get_lang_rules(lang: str) -> str:
+    if lang == "hi":
+        return """
+LANGUAGE & TONE RULES:
+- शुद्ध और सरल हिंदी (Pure Hindi) का प्रयोग करें।
+- "हिंग्लिश" (Hinglish) का प्रयोग बिल्कुल न करें। 
+- अंग्रेजी शब्दों (जैसे 'doctor', 'problem', 'medicine') के स्थान पर हिंदी शब्दों ('डॉक्टर', 'परेशानी', 'दवाई') का प्रयोग करें, लेकिन उन्हें देवनागरी लिपि में ही लिखें।
+- हमेशा स्त्रीलिंग (Feminine) का प्रयोग करें: "मैं समझ सकती हूँ", "मैं बताती हूँ"।
+- वाक्य छोटे और स्पष्ट रखें ताकि फोन पर सुनने में आसानी हो।
+"""
     if lang == "en":
         return """
 LANGUAGE & TONE RULES:
@@ -388,16 +399,16 @@ LANGUAGE & TONE RULES:
 
 def _get_greeting(lang: str) -> str:
     greetings = {
-        "hi": '- "Namaste! Main KisanVani se, aapki Krishi Sahayak bol rahi hoon. Asha karti hoon aap theek honge. (Yeh call quality ke liye record ho rahi hai). Boliye, aaj main aapki kya madad kar sakti hoon?"',
+        "hi": '- "नमस्ते! मैं किसानवाणी से आपकी कृषि सहायक बोल रही हूँ। आशा है आप ठीक होंगे। यह कॉल रिकॉर्ड की जा रही है। बताइए, आज मैं आपकी क्या मदद कर सकती हूँ?"',
         "en": '- "Hello! I am your Krishi Sahayak from KisanVani. I hope you are doing well. (This call is being recorded for quality purposes). How can I help you today?"',
-        "pa": '- "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਕਿਸਾਨਵਾਣੀ ਤੋਂ ਤੁਹਾਡੀ ਕ੍ਰਿਸ਼ੀ ਸਹਾਇਕ ਬੋਲ ਰਹੀ ਹਾਂ। ਉਮੀਦ ਹੈ ਕਿ ਤੁਸੀਂ ਠੀਕ ਹੋਵੋਗੇ। (ਇਹ ਕਾਲ ਕੁਆਲਿਟੀ ਲਈ ਰਿਕਾਰਡ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ)। ਦੱਸੋ, ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?"',
+        "pa": '- "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਕਿਸਾਨਵਾਣੀ ਤੋਂ ਤੁਹਾਡੀ ਕ੍ਰਿਸ਼ੀ सਹਾਇਕ ਬੋਲ ਰਹੀ ਹਾਂ। ਉਮੀਦ ਹੈ ਕਿ ਤੁਸੀਂ ਠੀਕ ਹੋਵੋਗੇ। (ਇਹ ਕਾਲ ਕੁਆਲਿਟੀ ਲਈ ਰਿਕਾਰਡ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ)। ਦੱਸੋ, ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?"',
         "mr": '- "नमस्कार! मी किसानवाणीकडून आपली कृषी सहाय्यक बोलत आहे. आशा आहे की आपण ठीक असाल. (हा कॉल गुणवत्तेसाठी रेकॉर्ड केला जात आहे). सांगा, आज मी आपली काय मदत करू शकते?"'
     }
     return greetings.get(lang, greetings["hi"])
 
 def _get_name_ask(lang: str) -> str:
     prompts = {
-        "hi": '"Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"',
+        "hi": '"जब तक आप बताते हैं, क्या मैं आपका शुभ नाम जान सकती हूँ?"',
         "en": '"While you tell me that, may I know your name please?"',
         "pa": '"ਜਦੋਂ ਤੱਕ ਤੁਸੀਂ ਦੱਸਦੇ ਹੋ, ਕੀ ਮੈਂ ਤੁਹਾਡਾ ਸ਼ੁਭ ਨਾਮ ਜਾਣ ਸਕਦੀ ਹਾਂ?"',
         "mr": '"तुम्ही सांगेपर्यंत, मी तुमचे नाव जाणून घेऊ शकते का?"'
@@ -616,9 +627,10 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
                 or kb_context.startswith("Warning: Organisation context required")
             ):
                 if force_kb:
-                    content = "Maaf kijiyega, mere paas iski satik dawai abhi nahi hai, main aapko ek krishi expert se baat karwa sakti hoon"
+                    content = "माफ कीजियेगा, मेरे पास इसकी सटीक दवाई अभी नहीं है, मैं आपको एक कृषि विशेषज्ञ से बात करवा सकती हूँ।"
                     if lang == "en": content = "I'm sorry, I don't have the exact medicine for this right now, I can connect you with an agricultural expert."
                     elif lang == "pa": content = "ਮਾਫ ਕਰਨਾ, ਮੇਰੇ ਕੋਲ ਇਸ ਲਈ ਸਹੀ ਦਵਾਈ ਨਹੀਂ ਹੈ, ਮੈਂ ਤੁਹਾਨੂੰ ਇੱਕ ਖੇਤੀਬਾੜੀ ਮਾਹਿਰ ਨਾਲ ਜੋੜ ਸਕਦਾ ਹਾਂ।"
+                    elif lang == "mr": content = "क्षमस्व, माझ्याकडे सध्या यासाठी अचूक औषध नाही, मी तुम्हाला कृषी तज्ञाशी जोडून देऊ शकते."
                     
                     return {
                         "messages": [AIMessage(content=content)],
