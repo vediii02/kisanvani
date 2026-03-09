@@ -4,7 +4,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: kisanvani_postgres
-    network_mode: host
+    # network_mode: host
+    ports:
+      - "5434:5432"
     environment:
       POSTGRES_PASSWORD: rootpassword
       POSTGRES_DB: kisanvani
@@ -20,7 +22,9 @@ services:
   redis:
     image: redis:7-alpine
     container_name: kisanvani_redis
-    network_mode: host
+    # network_mode: host
+    ports:
+      - "6380:6379" # Expose 6379 from container to 6380 on host to avoid conflict if needed, though containers talk internally on 6379
     volumes:
       - redis_data:/data
     healthcheck:
@@ -34,18 +38,20 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: kisanvani_backend
-    network_mode: host
+    # network_mode: host
+    ports:
+      - "8001:8001"
     env_file:
       - .env
 
     environment:
-      PG_HOST: localhost
+      PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: kisanvani
       PG_PASSWORD: rootpassword
       PG_DATABASE: kisanvani
-      DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@localhost:5432/kisanvani
-      REDIS_URL: redis://localhost:6379
+      DATABASE_URL: postgresql+asyncpg://kisanvani:rootpassword@postgres:5432/kisanvani
+      REDIS_URL: redis://redis:6379
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       SARVAM_API_KEY: ${SARVAM_API_KEY}
       GOOGLE_TTS_API_KEY: ${GOOGLE_TTS_API_KEY}
@@ -84,7 +90,9 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: kisanvani_frontend
-    network_mode: host
+    # network_mode: host
+    ports:
+      - "3001:3001" # Nginx is listening on 3001 inside the container
     environment:
       PORT: 3001
       REACT_APP_BACKEND_URL: /api
@@ -98,7 +106,7 @@ services:
       - /app/node_modules
       - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 3001"]
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 3001"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -107,8 +115,11 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     container_name: kisanvani_pgadmin
-    network_mode: host
+    # network_mode: host
+    ports:
+      - "5050:80"
     environment:
+      PG_HOST: postgres
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: root
     depends_on:

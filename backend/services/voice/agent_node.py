@@ -95,17 +95,26 @@ async def agent_stream(
 
                     for char in chunk:
                         current_sentence += char
-                        # Latency optimization: split on punctuation OR if first chunk is long enough
-                        # Commas are now used as soft splitters for the first few chunks to reduce TTFB (Time To First Byte)
-                        words = current_sentence.strip().split()
-                        is_first_chunk = current_sentence.count('.') + current_sentence.count('!') + current_sentence.count('?') == 0
+                        # "Fast Start, Smooth Flow" Logic:
+                        # We only split aggressively on the VERY FIRST chunk of the interaction
+                        # to ensure sub-1.5s TTFB. Subsequent chunks are split only on sentences
+                        # to preserve natural pitch and intonation.
                         
+                        words = current_sentence.strip().split()
+                        
+                        # Detect if this is the first chunk ever sent for this AI response
+                        # ttfb_logged is False until the first chunk is sent
+                        is_first_chunk_of_response = not ttfb_logged
+                        
+                        # Core sentence boundaries (best for naturalness)
                         should_split = char in ['.', '!', '?', '।', '\n']
-                        # Latency optimization: split if we've reached word limit AND we are at a word boundary
-                        # REDUCED word limit from 5 to 2 for 1.5s latency target
+                        
+                        # Latency optimization: only for the first chunk
                         is_word_boundary = char in [' ', '\t', ',', '.', '!', '?', '।']
-                        if is_first_chunk and is_word_boundary and (char == ',' or len(words) >= 2):
-                            should_split = True
+                        if is_first_chunk_of_response and is_word_boundary:
+                            # Split on first comma OR first 2 words for instant start
+                            if char == ',' or len(words) >= 2:
+                                should_split = True
                             
                         if should_split:
                             sentence = current_sentence.strip()
