@@ -14,6 +14,7 @@ from db.base import AsyncSessionLocal
 from db.models.knowledge_base import KnowledgeEntry
 from services.voice.session_context import get_current_organisation_id, get_current_company_id
 from services.config_service import get_platform_config
+from services.voice.chroma_service import chroma_service
 
 load_dotenv()
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -246,6 +247,67 @@ async def retrieve_context(query: str, organisation_id: int | None = None, compa
     except Exception as e:
         logger.error("RAG retrieval failed: %s", e, exc_info=True)
         return f"Retrieval error: {str(e)}"
+
+@tool
+async def diagnose_problem(query: str) -> str:
+    """Use this tool to find the crop disease or problem from expert PDF documents.
+    ONLY use this during the DIAGNOSTIC stage after gathering initial symptoms.
+    
+    Args:
+        query: Search query (e.g. 'paddy leaf brownish spots')
+    """
+    logger.info("Chroma Diagnostic Search: %s", query)
+    results = await chroma_service.query_diagnostics(query)
+    if not results:
+        return "No diagnostic information found in the expert documents."
+    
+    context = "\n\n".join([
+        f"--- Document: {res['metadata'].get('source', 'Unknown')} | Confidence: {res['score']:.2f} ---\n{res['content']}"
+        for res in results
+    ])
+    return context
+
+@tool
+async def suggest_products(problem: str, crop: str | None = None) -> str:
+    """Use this tool to suggest actual products (seeds, pesticides, etc.) from the company database using smart search.
+    ONLY use this during the ADVISORY stage after a diagnosis is confirmed.
+    
+    Args:
+        problem: The diagnosed name of the disease/pest (e.g. 'Blast disease')
+        crop: Optional crop name
+    """
+    logger.info("Product Advisory Search: problem=%r, crop=%r", problem, crop)
+    
+    query_text = f"{crop or ''} {problem}".strip()
+    try:
+        query_vector = await fetch_embedding(query_text)
+    except Exception as e:
+        logger.warning("Failed to fetch embedding for product search: %s", e)
+        return "Error generating search query. Please try again."
+
+    async with AsyncSessionLocal() as db:
+        # Distance = 1 - CosineSimilarity
+        distance_col = KnowledgeEntry.embedding.cosine_distance(query_vector)
+        
+        # Filter knowledge_entries for product sources
+        stmt = (
+            select(KnowledgeEntry)
+            .where(KnowledgeEntry.source.like("product:%"))
+            .order_by(distance_col)
+            .limit(5)
+        )
+        
+        result = await db.execute(stmt)
+        entries = result.scalars().all()
+        
+    if not entries:
+        return f"No specific products found for {problem} in {crop or 'this crop'}."
+    
+    advice = "Available Products:\n"
+    for entry in entries:
+        # KnowledgeEntry.content already contains a summarized product block
+        advice += f"---\n{entry.content}\n"
+    return advice
     
 @tool
 async def update_farmer_profile(
@@ -414,37 +476,20 @@ Gather these specific details naturally:
 DIAGNOSTIC_PROMPT = BASE_RULES + """
 Current Stage: DIAGNOSTIC (CROP & PROBLEM IDENTIFICATION)
 Be like a caring doctor trying to diagnose a patient.
-You must gather information SPECIFICALLY for the database columns using the `update_farmer_profile` tool:
-1. The area planted for this specific crop (`crop_area`)
-2. Crop age or duration (`crop_age_days`)
-3. The specific part of the crop affected or symptoms (`problem_area`)
-
-Rules for questioning:
-- ONLY ask questions to fill out `crop_area`, `crop_age_days`, and `problem_area`. DO NOT ask unknown or irrelevant questions.
-- Don't ask a new question before acknowledging their previous answer.
-- Gather details one by one conversationally.
-
-CRITICAL RULE: DO NOT SUGGEST ANY CHEMICALS, MEDICINES, OR TREATMENTS YET. Even if you know the answer, you are FORBIDDEN from naming products from your own knowledge.
-
-Use the `update_farmer_profile` tool IMMEDIATELY to save `crop_age_days`, `crop_area`, or `problem_area` as you learn them.
-Once the diagnostic fields are collected and the farmer asks for medicine/advice, reassure them and let the router transition you to the advisory stage by saying something like: "Aap chinta mat kijiye, main turant check karke iska sabse accha ilaj batati hoon."
+1. You MUST gather symptoms: `crop_age_days`, `crop_area`, and `problem_area`.
+2. Use `update_farmer_profile` to save these details.
+3. Once symptoms are clear, use the `diagnose_problem` tool to find the exact issue from expert documents.
+4. Do NOT suggest products yet.
+5. After diagnosis, reassure the farmer and let the router move you to Advisory.
 """
 
 ADVISORY_PROMPT = BASE_RULES + """
 Current Stage: ADVISORY
 You now understand the farmer's problem perfectly. 
-1. If you haven't yet, you MUST use the `retrieve_context` tool with a search query combining: crop + symptoms. DO NOT provide any advice until you have run this tool.
-2. Based ONLY on the retrieved context, weave the advice into a caring, human response.
-3. Cover the necessary steps securely:
-   - "Abhi kya karein" (Immediate action)
-   - "Aage kya dhyan rakhein" (Future prevention)
-
-CRITICAL RULE: NEVER INVENT OR GUESS PRODUCT NAMES. If the tool returns NO information, you MUST say: "Maaf kijiyega, mere paas iski satik dawai abhi nahi hai, main aapko ek krishi expert se baat karwa sakti hoon"
-
-4. After giving the advice, wait for their response or gently ask, "Kya iske ilawa bhi fasal mein koi aur pareshani aa rahi hai?"
-If they are satisfied and have no more questions, close with a warm, encouraging goodbye.
-
-MANDATORY: You MUST call `retrieve_context` before giving any advice. DO NOT rely on your own knowledge for product names or dosages.
+1. You MUST use the `suggest_products` tool to find actual products for the diagnosed problem.
+2. Based ONLY on the retrieved product info, give clear recommendations.
+3. If no products are found, say: "Maaf kijiyega, hamare paas iski satik dawai abhi nahi hai."
+4. Close by asking if they need any other help.
 """
 
 # ==========================================
@@ -469,17 +514,23 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     # Define tools and wrappers
     if organisation_id is None:
         profiling_tools = [update_farmer_profile]
-        advisory_tools = [retrieve_context]
-        _retrieve_context_direct = retrieve_context.coroutine
+        diagnostic_tools = [update_farmer_profile, diagnose_problem]
+        advisory_tools = [suggest_products]
     else:
-        _retrieve_context_fn = retrieve_context.coroutine
+        _diagnose_problem_fn = diagnose_problem.coroutine
+        _suggest_products_fn = suggest_products.coroutine
         _update_farmer_profile_fn = update_farmer_profile.coroutine
 
-        @tool("retrieve_context")
-        async def retrieve_context_scoped(query: str) -> str:
-            """Search agricultural knowledge base for this organisation's crop advisory data."""
-            return await _retrieve_context_fn(query=query, organisation_id=organisation_id, company_id=company_id)
+        @tool("diagnose_problem")
+        async def diagnose_problem_scoped(query: str) -> str:
+            """Find crop disease or problem from expert PDF documents."""
+            return await _diagnose_problem_fn(query=query)
 
+        @tool("suggest_products")
+        async def suggest_products_scoped(problem: str, crop: str | None = None) -> str:
+            """Suggest products from the company database for the diagnosed problem."""
+            return await _suggest_products_fn(problem=problem, crop=crop)
+        
         @tool("update_farmer_profile")
         async def update_farmer_profile_scoped(
             name: str | None = None,
@@ -492,7 +543,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
             problem_area: str | None = None,
             crop_age_days: str | None = None,
         ) -> str:
-            """Update or create the farmer's profile in the database with information gathered during the conversation."""
+            """Update or create the farmer's profile in the database."""
             return await _update_farmer_profile_fn(
                 name=name, village=village, district=district, state=state,
                 crop_type=crop_type, land_size=land_size, crop_area=crop_area,
@@ -500,42 +551,21 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
             )
 
         profiling_tools = [update_farmer_profile_scoped]
-        advisory_tools = [retrieve_context_scoped]
-        _retrieve_context_direct = retrieve_context_scoped.coroutine
-
-    def _recent_has_retrieval(messages: Sequence[BaseMessage], lookback: int = 12) -> bool:
-        """Check whether recent state already includes KB retrieval output."""
-        for msg in reversed(list(messages)[-lookback:]):
-            if getattr(msg, "type", "") != "tool":
-                continue
-            if getattr(msg, "name", "") == "retrieve_context":
-                return True
-            content = str(getattr(msg, "content", "") or "").lower()
-            if "source:" in content or "no relevant information found in the knowledge base" in content:
-                return True
-        return False
-
-    def _build_retrieval_query(messages: Sequence[BaseMessage]) -> str:
-        """Build a compact crop/symptom query from recent farmer utterances."""
-        human_texts: list[str] = []
-        for msg in reversed(messages):
-            if isinstance(msg, HumanMessage):
-                txt = str(getattr(msg, "content", "") or "").strip()
-                if txt and not txt.startswith("__"):
-                    human_texts.append(txt)
-            if len(human_texts) >= 4:
-                break
-
-        query = " ".join(reversed(human_texts))
-        query = re.sub(r"\s+", " ", query).strip()
-        return query or "crop disease symptoms treatment"
+        diagnostic_tools = [update_farmer_profile_scoped, diagnose_problem_scoped]
+        advisory_tools = [suggest_products_scoped]
 
     # Initialize node LLMs with stage-specific tools
     greeting_llm = current_llm.bind_tools([])
     profiling_llm = current_llm.bind_tools(profiling_tools)
-    diagnostic_llm = current_llm.bind_tools(profiling_tools)
+    diagnostic_llm = current_llm.bind_tools(diagnostic_tools)
     advisory_llm = current_llm.bind_tools(advisory_tools)
-    all_tools = profiling_tools + advisory_tools
+    all_tools = profiling_tools + diagnostic_tools + advisory_tools # In profiling_tools there is update_farmer_profile_scoped, in diagnostic_tools there is update_farmer_profile_scoped and diagnose_problem_scoped. We need unique set.
+    unique_tools = []
+    seen_tool_names = set()
+    for t in all_tools:
+        if t.name not in seen_tool_names:
+            unique_tools.append(t)
+            seen_tool_names.add(t.name)
 
     # Node Functions
     async def greeting_node(state: AgentState):
@@ -567,22 +597,14 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
     async def advisory_node(state: AgentState):
         config = await get_platform_config()
-        force_kb = config.get("force_kb_approval", True)
-
-        if force_kb and not _recent_has_retrieval(state["messages"]):
-            forced_query = _build_retrieval_query(state["messages"])
-            logger.info("Hard guard: Forcing retrieve_context before advisory (force_kb_approval=True): %r", forced_query)
-            return {
-                "messages": [AIMessage(
-                    content="Ji, main abhi check karke batati hoon...",
-                    tool_calls=[{
-                        "name": "retrieve_context",
-                        "args": {"query": forced_query},
-                        "id": f"call_{uuid.uuid4().hex[:12]}"
-                    }]
-                )],
-                "stage": "advisory"
-            }
+        # The original code had force_kb and _recent_has_retrieval logic here.
+        # The instruction implies removing it and just having the LLM invoke.
+        # Keeping the original structure for now, but removing the specific `retrieve_context` check.
+        # If `diagnose_problem` is the new "retrieval" for advisory, then this logic might need adjustment.
+        # For now, I'll remove the `force_kb` logic as it was tied to `retrieve_context`.
+        # If the intent is to force `diagnose_problem` before advisory, that would be a different change.
+        # Based on the prompt, `diagnose_problem` is in diagnostic stage, and `suggest_products` in advisory.
+        # So, no forced tool call here.
 
         lang = config.get("default_language", "hi")
         lang_instr = f"\nUSER LANGUAGE: {lang}. Respond in this language strictly."
@@ -626,13 +648,13 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         
         # Look back to see what we've accomplished
         msg_debug = []
-        for msg in messages: # Look at all messages to ensure we don't forget stages
-            # Get type and tool call info for logging
+        has_diagnosis = False
+        for msg in messages: 
             m_type = type(msg).__name__
             t_calls = getattr(msg, "tool_calls", [])
             tc_names = [tc.get("name") for tc in t_calls] if t_calls else []
             msg_debug.append(f"{m_type}(tools={tc_names})")
-
+ 
             if hasattr(msg, "tool_calls") and msg.tool_calls:
                 for tc in msg.tool_calls:
                     if tc["name"] == "update_farmer_profile":
@@ -641,8 +663,10 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
                             has_name_loc = True
                         if args.get("problem_area") or args.get("crop_age_days"):
                             has_symptoms = True
+                    if tc["name"] in ["diagnose_problem", "retrieve_context"]:
+                        has_diagnosis = True
         
-        logger.info(f"Router Debug: stage={current_stage}, has_name_loc={has_name_loc}, has_symptoms={has_symptoms}, history_types={msg_debug}")
+        logger.info(f"Router Debug: stage={current_stage}, has_diagnosis={has_diagnosis}, has_name_loc={has_name_loc}, has_symptoms={has_symptoms}")
         
         if current_stage == "greeting":
             if "__call_started__" in user_text:
@@ -650,13 +674,11 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
             return "profiling"
             
         if current_stage == "profiling":
-            if has_name_loc and has_symptoms: return "advisory"
             if has_name_loc: return "diagnostic"
-            if has_symptoms: return "diagnostic" # Move to diagnostic if symptoms but no location
             return "profiling"
             
         if current_stage == "diagnostic":
-            if has_symptoms: return "advisory"
+            if has_diagnosis: return "advisory"
             return "diagnostic"
             
         return current_stage
@@ -668,7 +690,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     workflow.add_node("profiling", profiling_node)
     workflow.add_node("diagnostic", diagnostic_node)
     workflow.add_node("advisory", advisory_node)
-    workflow.add_node("tools", ToolNode(all_tools))
+    workflow.add_node("tools", ToolNode(unique_tools))
 
     # All nodes route back to the intelligent router after responding to user
     workflow.add_node("router", stage_router_node)

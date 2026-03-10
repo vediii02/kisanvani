@@ -153,7 +153,10 @@ transformers==4.35.2
 pandas
 pydub
 sarvamai
-
+chromadb
+langchain-chroma
+langchain-experimental
+scikit-learn
 pinecone-client>=3.0.0
 pinecone>=3.0.0
 numpy<2
