@@ -59,7 +59,7 @@ async def create_organisation_admin():
                 username="rasi_admin",
                 email="admin@rasiseeds.com",
                 hashed_password=get_password_hash("rasi123"),
-                full_name="Rasi Seeds Administrator",
+                full_name=rasi_org.name,
                 role="organisation_admin",
                 organisation_id=rasi_org.id,
                 status="active"
@@ -161,7 +161,7 @@ async def create_custom_org_admin(org_id: int, username: str, password: str, ema
                 username=username,
                 email=email,
                 hashed_password=get_password_hash(password),
-                full_name=f"{org.name} Administrator",
+                full_name=org.name,
                 role="organisation_admin",
                 organisation_id=org.id,
                 status="active"

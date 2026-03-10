@@ -67,13 +67,13 @@ class Company(Base):
     # One company has many products
     
     # Relationship to users - Deleting company unlinks users but keeps them
-    users = relationship("User", back_populates="company")
+    users = relationship("User", back_populates="company", cascade="all, delete-orphan", passive_deletes=True)
 
     # Relationship to organisation
     organisation = relationship("Organisation", back_populates="companies")
 
     # Relationship to brands
-    brands = relationship("Brand", back_populates="company", cascade="all, delete-orphan")
+    brands = relationship("Brand", back_populates="company", cascade="all, delete-orphan", passive_deletes=True)
 
     # Relationship to products
-    products = relationship("Product", back_populates="company", cascade="all, delete-orphan")
+    products = relationship("Product", back_populates="company", cascade="all, delete-orphan", passive_deletes=True)

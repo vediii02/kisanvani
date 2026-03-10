@@ -17,8 +17,8 @@ class User(Base):
 
     full_name = Column(String(200))
     role = Column(String(50), default="company")  # admin, organisation, company
-    organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="SET NULL"), nullable=True)  # For organisation role
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)  # For company role
+    organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="CASCADE"), nullable=True)  # For organisation role
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True)  # For company role
     status = Column(String(20), default="active")  # active, inactive, rejected, pending
     reset_token = Column(String(500), nullable=True)
     reset_token_expires = Column(DateTime(timezone=True), nullable=True)

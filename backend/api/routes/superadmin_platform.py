@@ -406,7 +406,7 @@ async def create_organisation(
         username=org_admin_username,
         email=(org_data.email.strip() if org_data.email and org_data.email.strip() else f"{org_admin_username}@{new_org.name.lower().replace(' ', '')}.com"),
         hashed_password=get_password_hash(org_data.admin_password),
-        full_name=f"{new_org.name} Administrator",
+        full_name=new_org.name,
         role="organisation",
         organisation_id=new_org.id,
         status="active"

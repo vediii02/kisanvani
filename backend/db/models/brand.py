@@ -29,4 +29,4 @@ class Brand(Base):
     # Relationships
     organisation = relationship("Organisation", back_populates="brands")
     company = relationship("Company", back_populates="brands")
-    products = relationship("Product", back_populates="brand", cascade="all, delete-orphan")
+    products = relationship("Product", back_populates="brand", cascade="all, delete-orphan", passive_deletes=True)
