@@ -18,24 +18,34 @@ async def main():
     print("Initializing agent...")
     await init_checkpointer()
     
-    # Use default org/comp IDs
-    org_id = 1
+    # Use org ID 2 where knowledge base entries exist
+    org_id = 2
     comp_id = 1
     set_current_organisation_id(org_id)
     set_current_company_id(comp_id)
     # Test harness: ensure profile tool has a session phone key.
-    set_current_phone_number("+910000000001")
+    set_current_phone_number("+919424260359")
     thread_id = str(uuid4())
     
     executor = await get_agent_executor(org_id, comp_id)
     
     print(f"Agent ready! Thread ID: {thread_id}")
     print("Type '__CALL_STARTED__' to trigger greeting.")
-    print("Type 'exit' to quit.")
-    
+    if len(sys.argv) > 1:
+        inputs = sys.argv[1:] + ["exit"]
+    else:
+        inputs = None
+
+    input_idx = 0
     while True:
         try:
-            user_input = input("\nYou: ")
+            if inputs:
+                if input_idx >= len(inputs): break
+                user_input = inputs[input_idx]
+                input_idx += 1
+                print(f"\nYou: {user_input}")
+            else:
+                user_input = input("\nYou: ")
         except EOFError:
             break
             

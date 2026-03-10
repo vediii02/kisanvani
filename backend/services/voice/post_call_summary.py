@@ -16,9 +16,7 @@ logger = logging.getLogger(__name__)
 class CallSummaryMetricsPayload(BaseModel):
     summary_text_hindi: str = Field(description="Summary of the phone call in Hindi")
     summary_text_english: str = Field(description="Summary of the phone call in English")
-    farmer_name: Optional[str] = Field(description="The name of the farmer if mentioned in the conversation (e.g. 'Aayush', 'Suresh'). If not mentioned or unclear, return null.", default=None)
     target_crop: Optional[str] = Field(description="The specific crop being discussed by the farmer on the call (e.g. Wheat, Soyabean, Cotton). If multiple, state the primary one. If not mentioned, return null.", default=None)
-    target_problem: Optional[str] = Field(description="The specific agricultural problem being discussed (e.g. Pest attack, Yellowing leaves, Wilting, Disease, Irrigation issue). If not mentioned or unclear, return null.", default=None)
     key_recommendations: List[str] = Field(description="List of key recommendations given to the farmer", default_factory=list)
     products_mentioned: List[str] = Field(description="List of products or chemicals suggested to the farmer", default_factory=list)
     farmer_satisfaction: int = Field(description="Rate farmer satisfaction from 1 to 5. 5 is very satisfied, 1 is frustrated or angry.", ge=1, le=5)
@@ -93,7 +91,6 @@ async def generate_post_call_summary(session_id: str, provider_call_id: str, org
             summary = CallSummary(
                 call_session_id=call_obj.id,
                 target_crop=extraction.target_crop,
-                target_problem=extraction.target_problem,
                 summary_text_hindi=extraction.summary_text_hindi,
                 summary_text_english=extraction.summary_text_english,
                 key_recommendations=extraction.key_recommendations,
@@ -114,14 +111,6 @@ async def generate_post_call_summary(session_id: str, provider_call_id: str, org
                 call_outcome=extraction.call_outcome
             )
             db.add(metrics)
-            
-            # Update Farmer Name if extracted and currently "User" or null
-            if extraction.farmer_name:
-                from db.models.farmer import Farmer
-                farmer = await db.get(Farmer, call_obj.farmer_id)
-                if farmer and (not farmer.name or farmer.name == "User" or farmer.name == "Unknown Caller"):
-                    logger.info(f"Updating Farmer {farmer.id} name from {farmer.name} to {extraction.farmer_name}")
-                    farmer.name = extraction.farmer_name
             
             await db.commit()
             logger.info(f"Successfully generated post-call summary and metrics for {session_id}")

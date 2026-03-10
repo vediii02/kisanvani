@@ -1,8 +1,6 @@
 import os
 import uuid
 import re
-import asyncio
-import time
 from typing import Any
 from dotenv import load_dotenv
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
@@ -14,11 +12,7 @@ from sqlalchemy import select
 
 from db.base import AsyncSessionLocal
 from db.models.knowledge_base import KnowledgeEntry
-from services.voice.session_context import (
-    get_current_organisation_id,
-    get_current_company_id,
-    get_current_session_id,
-)
+from services.voice.session_context import get_current_organisation_id, get_current_company_id
 from services.config_service import get_platform_config
 
 load_dotenv()
@@ -35,7 +29,7 @@ logger = setup_logger("llm")
 # LLM factory — picks provider based on PlatformConfig
 def _create_groq_llm():
     return ChatGroq(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         temperature=0.3,
         api_key=groq_api_key,
     )
@@ -44,9 +38,8 @@ def _create_openai_llm():
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         model="gpt-4o-mini",
-        temperature=0.1,
+        temperature=0.3,
         api_key=openai_api_key,
-        request_timeout=3.0,
     )
 
 def _create_gemini_llm():
@@ -67,26 +60,21 @@ async def get_llm():
         config = await get_platform_config()
         provider = config.get("llm_model", "groq")
         if provider == "openai":
-            logger.info("Using OpenAI (gpt-4o-mini) as LLM provider")
+            logger.info("Using OpenAI (GPT-4o) as LLM provider")
             return _create_openai_llm()
         elif provider == "gemini":
             logger.info("Using Google (Gemini 2.0 Flash) as LLM provider")
             return _create_gemini_llm()
         else:
-            logger.info("Using Groq (Llama 3.1) as LLM provider")
+            logger.info("Using Groq (Llama 3.3) as LLM provider")
             return _create_groq_llm()
     except Exception as e:
         logger.error(f"Failed to get LLM from config, using default Groq: {e}")
         return _create_groq_llm()
 
-openai_client = AsyncOpenAI(api_key=openai_api_key, timeout=3.0)
+openai_client = AsyncOpenAI(api_key=openai_api_key)
 
-_agent_cache: dict[tuple[int | None, int | None, str], Any] = {}
-
-# Simple in‑memory caches to avoid recomputing expensive operations
-_embedding_cache: dict[tuple[str, str], list[float]] = {}
-# Keyed by (session_id, query)
-_prefetched_kb: dict[tuple[str | None, str], str] = {}
+_agent_cache: dict[tuple[int | None, int | None], Any] = {}
 
 # Postgres-backed conversation memory
 _pg_host = os.getenv("PG_HOST", "localhost")
@@ -131,57 +119,39 @@ async def _fetch_query_embedding_openai(query: str) -> list[float]:
     return response.data[0].embedding
 
 async def fetch_embedding(text: str) -> list[float]:
-    """Fetch (and cache) an embedding for the given text."""
-    provider_tag = "openai"
     try:
         config = await get_platform_config()
         provider = config.get("llm_model", "groq")
         if provider == "gemini":
-            provider_tag = "gemini"
             logger.info("Using Google Gemini for embeddings")
-            cache_key = (provider_tag, text)
-            if cache_key in _embedding_cache:
-                return _embedding_cache[cache_key]
-            start = time.monotonic()
-            vec = await _fetch_query_embedding_google(text)
-            duration = (time.monotonic() - start) * 1000
-            logger.info("Embedding latency (gemini): %.2fms (len=%d)", duration, len(text))
-            _embedding_cache[cache_key] = vec
-            return vec
+            return await _fetch_query_embedding_google(text)
     except Exception as e:
         logger.error(f"Failed to get PlatformConfig for embedding dict, falling back to OpenAI: {e}")
     
-    provider_tag = "openai"
-    cache_key = (provider_tag, text)
-    if cache_key in _embedding_cache:
-        return _embedding_cache[cache_key]
-
     logger.info("Using OpenAI text-embedding-3-small for embeddings")
-    start = time.monotonic()
-    vec = await _fetch_query_embedding_openai(text)
-    duration = (time.monotonic() - start) * 1000
-    logger.info("Embedding latency (openai): %.2fms (len=%d)", duration, len(text))
-    _embedding_cache[cache_key] = vec
-    return vec
+    return await _fetch_query_embedding_openai(text)
 
 
 async def _pgvector_search(
     query: str,
     *,
     limit: int = 5,
-    threshold: float = 0.4, # Default: 1 - 0.6 (60% confidence)
+    min_confidence: float = 20.0,
     organisation_id: int,
     company_id: int | None = None,
 ) -> list[KnowledgeEntry]:
-    embed_start = time.monotonic()
     query_vector = await fetch_embedding(query)
-    embed_ms = (time.monotonic() - embed_start) * 1000
 
     async with AsyncSessionLocal() as db:
+        # Distance = 1 - CosineSimilarity
+        # Confidence = (1 - Distance) * 100
+        distance_col = KnowledgeEntry.embedding.cosine_distance(query_vector)
+        confidence_expr = (1 - distance_col) * 100
+
         filters = [
             KnowledgeEntry.embedding.is_not(None),
             KnowledgeEntry.organisation_id == organisation_id,
-            KnowledgeEntry.embedding.cosine_distance(query_vector) <= threshold
+            confidence_expr >= min_confidence
         ]
         if company_id is not None:
             filters.append(KnowledgeEntry.company_id == company_id)
@@ -193,18 +163,7 @@ async def _pgvector_search(
         stmt = stmt.order_by(
             KnowledgeEntry.embedding.cosine_distance(query_vector)
         ).limit(limit)
-
-        db_start = time.monotonic()
         result = await db.execute(stmt)
-        db_ms = (time.monotonic() - db_start) * 1000
-        logger.info(
-            "RAG timings: embedding=%.2fms, pgvector=%.2fms (limit=%d, org_id=%s, company_id=%s)",
-            embed_ms,
-            db_ms,
-            limit,
-            organisation_id,
-            company_id,
-        )
         return list(result.scalars().all())
 
 
@@ -213,12 +172,11 @@ async def _pgvector_search(
 # ==========================================
 @tool
 async def retrieve_context(query: str, organisation_id: int | None = None, company_id: int | None = None) -> str:
-    """Search the agricultural knowledge base for crop problems, pest management,
-    disease control, and advisory information. Use this tool when you have enough
-    information about the farmer's problem to search for relevant advice.
+    """Use this tool ONLY when the farmer asks for treatment, medicine, or solution for crop disease.
+    DO NOT guess answers; always use this tool if advice is needed.
 
     Args:
-        query: Search query describing the crop problem, symptoms, or topic.
+        query: Search query (crop name + symptoms).
         organisation_id: Optional tenant scope ID.
         company_id: Optional sub-tenant company ID.
     """
@@ -226,31 +184,56 @@ async def retrieve_context(query: str, organisation_id: int | None = None, compa
 
     resolved_org_id = organisation_id
     if resolved_org_id is None:
+        from services.voice.session_context import get_current_organisation_id
         resolved_org_id = get_current_organisation_id()
+    
+    resolved_comp_id = company_id
+    if resolved_comp_id is None:
+        from services.voice.session_context import get_current_company_id
+        resolved_comp_id = get_current_company_id()
+
+    # Fallback to DB lookup if context is missing (common in live async loops)
+    if resolved_org_id is None:
+        from services.voice.session_context import get_current_session_id
+        session_id = get_current_session_id()
+        if session_id:
+            try:
+                from db.models.call_session import CallSession
+                from services.voice.session_context import set_current_organisation_id, set_current_company_id
+                async with AsyncSessionLocal() as db:
+                    call_row = (await db.execute(
+                        select(CallSession.organisation_id)
+                        .where(CallSession.session_id == session_id)
+                    )).first()
+                    if call_row:
+                        db_org_id = call_row[0]
+                        if db_org_id:
+                            resolved_org_id = db_org_id
+                            set_current_organisation_id(db_org_id)
+                            logger.info("Recovered organisation_id=%s from session DB", db_org_id)
+            except Exception as e:
+                logger.warning("Failed to recover org_id from session DB: %s", e)
+
     if resolved_org_id is None:
         env_org_id = os.getenv("VOICE_DEFAULT_ORGANISATION_ID")
         resolved_org_id = int(env_org_id) if env_org_id else None
-        
-    resolved_comp_id = company_id
-    if resolved_comp_id is None:
-        resolved_comp_id = get_current_company_id()
 
     if resolved_org_id is None:
         return "Warning: Organisation context required for knowledge retrieval."
 
-    config = await get_platform_config()
-    rag_limit = config.get("rag_max_results", 5)
-    rag_min_conf = config.get("rag_min_confidence", 60)
-    threshold = (100 - rag_min_conf) / 100.0
-
     try:
+        config = await get_platform_config()
+        min_conf = config.get("rag_min_confidence", 20.0)
+        max_res = config.get("rag_max_results", 5)
+
         docs = await _pgvector_search(
-            query,
-            limit=rag_limit,
-            threshold=threshold,
-            organisation_id=resolved_org_id,
-            company_id=resolved_comp_id,
+            query, 
+            limit=max_res, 
+            min_confidence=min_conf,
+            organisation_id=resolved_org_id, 
+            company_id=resolved_comp_id
         )
+        logger.info("RAG search (min_conf=%s, limit=%s) found %d documents", min_conf, max_res, len(docs))
         if not docs:
             return "No relevant information found in the knowledge base."
 
@@ -276,9 +259,8 @@ async def update_farmer_profile(
     problem_area: str | None = None,
     crop_age_days: str | None = None,
 ) -> str:
-    """Update or create the farmer's profile in the database with information 
-    gathered during the conversation. Use this tool as soon as you get any 
-    personal or crop details from the farmer.
+    """Use this tool IMMEDIATELY the moment you learn a new detail (name, village, land size, etc.).
+    Do not wait for the end of the conversation.
 
     Args:
         name: Farmer's name
@@ -396,106 +378,36 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     stage: str # 'greeting', 'profiling', 'diagnostic', 'advisory'
 
-BASE_RULES = """You are AI Krishi Sahayak (KisanVani), a friendly, highly empathetic female agricultural expert on a live phone call with an Indian farmer.
-GENERAL RULES:
-- Be deeply empathetic. If a farmer mentions crop damage or disease, express genuine concern first ("Arre, yeh toh badi pareshani ki baat hai", "Chinta mat kijiye, hum iska ilaj nikalenge").
-- Keep sentences VERY SHORT and natural. The farmer is listening on a phone, not reading a text message.
-- NEVER use formal terms. Use colloquial, empathetic language.
-- NEVER use lists, bullet points, asterisks, or markdown. Output plain spoken text only.
-- NEVER sound robotic. Use conversational fillers naturally.
-- NEVER mention AI, database, tools, or technology. Act like a real human expert sitting in an advisory center.
-- Ask ONLY ONE question at a time. Never interrogate the farmer.
+BASE_RULES = """You are AI Krishi Sahayak (KisanVani), a friendly Hinglish female agricultural expert.
+RULES:
+- Speak feminine Hinglish (Hindi + English words like 'spray', 'dawai').
+- deeply empathetic. Acknowledge crop problems with concern.
+- SHORT spoken sentences. No lists or markdown. Plain text only.
+- Ask ONLY ONE question at a time.
+- If you receive "__USER_SILENCE__", say: "Hello, kya aap mujhe sun pa rahe hain?"
+- If you receive "__USER_SILENCE_FINAL__", say: "Aapki aawaz nahi aa rahi hai. Main call kaat rahi hoon. Namaste!"
 """
 
-DEFAULT_RULES = """
-LANGUAGE & TONE RULES:
-- Speak ONLY in natural, conversational Hindi.
-- Use feminine forms always: "main samajh sakti hoon", "main batati hoon".
-- NEVER use English words (like 'spray', 'acre', 'tablet') if a common Hindi word exists (use 'छिड़काव', 'एकड़', 'दवाई').
-- DO NOT mix English characters or alphabet into your response. Use ONLY Devanagari script.
-- NEVER use Hinglish. The farmer expects pure, respectful Hindi.
-"""
-
-def _get_lang_rules(lang: str) -> str:
-    if lang == "hi":
-        return """
-LANGUAGE & TONE RULES:
-- शुद्ध और सरल हिंदी (Pure Hindi) का प्रयोग करें।
-- "हिंग्लिश" (Hinglish) का प्रयोग बिल्कुल न करें। 
-- अंग्रेजी शब्दों (जैसे 'doctor', 'problem', 'medicine') के स्थान पर हिंदी शब्दों ('डॉक्टर', 'परेशानी', 'दवाई') का प्रयोग करें, लेकिन उन्हें देवनागरी लिपि में ही लिखें।
-- हमेशा स्त्रीलिंग (Feminine) का प्रयोग करें: "मैं समझ सकती हूँ", "मैं बताती हूँ"।
-- वाक्य छोटे और स्पष्ट रखें ताकि फोन पर सुनने में आसानी हो।
-"""
-    if lang == "en":
-        return """
-LANGUAGE & TONE RULES:
-- Speak ONLY in natural, conversational Indian English.
-- Be deeply empathetic and polite.
-- Keep sentences VERY SHORT for phone audio.
-"""
-    elif lang == "pa":
-        return """
-LANGUAGE & TONE RULES:
-- Speak ONLY in natural, conversational Punjabi.
-- Use feminine forms always.
-- Be deeply empathetic and polite.
-"""
-    elif lang == "mr":
-        return """
-LANGUAGE & TONE RULES:
-- Speak ONLY in natural, conversational Marathi.
-- Use feminine forms always.
-- Be deeply empathetic and polite.
-"""
-    return DEFAULT_RULES
-
-def _get_greeting(lang: str) -> str:
-    greetings = {
-        "hi": '- "नमस्ते! मैं किसानवाणी से आपकी कृषि सहायक बोल रही हूँ। आशा है आप ठीक होंगे। यह कॉल रिकॉर्ड की जा रही है। बताइए, आज मैं आपकी क्या मदद कर सकती हूँ?"',
-        "en": '- "Hello! I am your Krishi Sahayak from KisanVani. I hope you are doing well. (This call is being recorded for quality purposes). How can I help you today?"',
-        "pa": '- "ਸਤਿ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਕਿਸਾਨਵਾਣੀ ਤੋਂ ਤੁਹਾਡੀ ਕ੍ਰਿਸ਼ੀ सਹਾਇਕ ਬੋਲ ਰਹੀ ਹਾਂ। ਉਮੀਦ ਹੈ ਕਿ ਤੁਸੀਂ ਠੀਕ ਹੋਵੋਗੇ। (ਇਹ ਕਾਲ ਕੁਆਲਿਟੀ ਲਈ ਰਿਕਾਰਡ ਕੀਤੀ ਜਾ ਰਹੀ ਹੈ)। ਦੱਸੋ, ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?"',
-        "mr": '- "नमस्कार! मी किसानवाणीकडून आपली कृषी सहाय्यक बोलत आहे. आशा आहे की आपण ठीक असाल. (हा कॉल गुणवत्तेसाठी रेकॉर्ड केला जात आहे). सांगा, आज मी आपली काय मदत करू शकते?"'
-    }
-    return greetings.get(lang, greetings["hi"])
-
-def _get_name_ask(lang: str) -> str:
-    prompts = {
-        "hi": '"जब तक आप बताते हैं, क्या मैं आपका शुभ नाम जान सकती हूँ?"',
-        "en": '"While you tell me that, may I know your name please?"',
-        "pa": '"ਜਦੋਂ ਤੱਕ ਤੁਸੀਂ ਦੱਸਦੇ ਹੋ, ਕੀ ਮੈਂ ਤੁਹਾਡਾ ਸ਼ੁਭ ਨਾਮ ਜਾਣ ਸਕਦੀ ਹਾਂ?"',
-        "mr": '"तुम्ही सांगेपर्यंत, मी तुमचे नाव जाणून घेऊ शकते का?"'
-    }
-    return prompts.get(lang, prompts["hi"])
-
-HANGUP_RULES = """
-CALL TERMINATION RULE:
-- If the conversation has reached a natural end (e.g., the farmer says "Thank you", or "Theek hai, dhanyawad"), greet them one last time and append the marker "[END_CALL]" at the VERY END of your response.
-- Example: "Theek hai, apna khayal rakhiyega. Namaste! [END_CALL]"
-
-SILENCE HANDLING:
-- If you receive "__USER_SILENCE__", say ONLY: "Hello, kya aap mujhe sun pa rahe hain? Aap wahan hain?"
-- If you receive "__USER_SILENCE_FINAL__", say ONLY: "Lagta hai aapki aawaz nahi aa rahi hai. Main call kaat rahi hoon. Aap fursat mein phir se call kar lijiyega. Namaste! [END_CALL]"
-"""
-
-GREETING_PROMPT = """
+GREETING_PROMPT = BASE_RULES + """
 Current Stage: GREETING & CONSENT
 When you receive "__CALL_STARTED__", greet the farmer warmly:
-{greeting_text}
+- "Namaste! Main KisanVani se, aapki Krishi Sahayak bol rahi hoon. Asha karti hoon aap theek honge. (Yeh call quality ke liye record ho rahi hai). Boliye, aaj main aapki kya madad kar sakti hoon?"
 - Do NOT force them to explicitly say "yes" to recording unless they object.
-- If they ask a question immediately, answer it. Otherwise, politely ask for their name: {name_ask_text}
+- If they ask a question immediately, answer it. Otherwise, politely ask for their name: "Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"
 """
 
 PROFILING_PROMPT = BASE_RULES + """
 Current Stage: FARMER PROFILING
-Your goal is to learn their basic information to save in the database (`update_farmer_profile` tool).
-Gather these specific details naturally, WITHOUT sounding like an interrogator:
+MANDATORY TOOL RULE: Use `update_farmer_profile` tool IMMEDIATELY the moment you learn a new detail (name, village, etc.). DO NOT wait!
+
+Your goal is to learn their basic information to save in the database.
+Gather these specific details naturally:
 1. Name (`name`)
 2. Location (`village`, `district`, `state`)
 3. Total land size (`land_size`)
 4. The crop they planted (`crop_type`)
 
 - If they tell you their problem, acknowledge it FIRST, then gently ask for the missing profile details (e.g. location or land size).
-- Use the `update_farmer_profile` tool IMMEDIATELY when you learn a new detail.
 - Once you know these basic details, gently steer to the specific crop problem.
 """
 
@@ -531,6 +443,8 @@ CRITICAL RULE: NEVER INVENT OR GUESS PRODUCT NAMES. If the tool returns NO infor
 
 4. After giving the advice, wait for their response or gently ask, "Kya iske ilawa bhi fasal mein koi aur pareshani aa rahi hai?"
 If they are satisfied and have no more questions, close with a warm, encouraging goodbye.
+
+MANDATORY: You MUST call `retrieve_context` before giving any advice. DO NOT rely on your own knowledge for product names or dosages.
 """
 
 # ==========================================
@@ -614,205 +528,138 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
         query = " ".join(reversed(human_texts))
         query = re.sub(r"\s+", " ", query).strip()
-        return query or "crop symptoms and treatment"
+        return query or "crop disease symptoms treatment"
 
-    # Initialize node LLMs
-    # Keep both tools available after greeting so stage transitions do not block
-    # legitimate tool usage in mixed user utterances (profile + advisory together).
-    all_tools = profiling_tools + advisory_tools
+    # Initialize node LLMs with stage-specific tools
     greeting_llm = current_llm.bind_tools([])
-    profiling_llm = current_llm.bind_tools(all_tools)
-    diagnostic_llm = current_llm.bind_tools(all_tools)
-    advisory_llm = current_llm.bind_tools(all_tools)
+    profiling_llm = current_llm.bind_tools(profiling_tools)
+    diagnostic_llm = current_llm.bind_tools(profiling_tools)
+    advisory_llm = current_llm.bind_tools(advisory_tools)
+    all_tools = profiling_tools + advisory_tools
 
     # Node Functions
     async def greeting_node(state: AgentState):
         config = await get_platform_config()
         lang = config.get("default_language", "hi")
+        lang_instr = f"\nUSER LANGUAGE: {lang}. Respond in this language strictly."
         
-        lang_rules = _get_lang_rules(lang)
-        prompt = BASE_RULES + lang_rules + GREETING_PROMPT.format(
-            greeting_text=_get_greeting(lang),
-            name_ask_text=_get_name_ask(lang)
-        ) + HANGUP_RULES
-        
-        messages = [SystemMessage(content=prompt)] + list(state["messages"])
+        messages = [SystemMessage(content=GREETING_PROMPT + lang_instr)] + list(state["messages"])
         response = await greeting_llm.ainvoke(messages)
         return {"messages": [response], "stage": "greeting"}
 
     async def profiling_node(state: AgentState):
         config = await get_platform_config()
         lang = config.get("default_language", "hi")
-        prompt = BASE_RULES + _get_lang_rules(lang) + PROFILING_PROMPT + HANGUP_RULES
-        
-        messages = [SystemMessage(content=prompt)] + list(state["messages"])
+        lang_instr = f"\nUSER LANGUAGE: {lang}. Respond in this language strictly."
+
+        messages = [SystemMessage(content=PROFILING_PROMPT + lang_instr)] + list(state["messages"])
         response = await profiling_llm.ainvoke(messages)
         return {"messages": [response], "stage": "profiling"}
 
     async def diagnostic_node(state: AgentState):
         config = await get_platform_config()
         lang = config.get("default_language", "hi")
-        prompt = BASE_RULES + _get_lang_rules(lang) + DIAGNOSTIC_PROMPT + HANGUP_RULES
-        
-        messages = [SystemMessage(content=prompt)] + list(state["messages"])
+        lang_instr = f"\nUSER LANGUAGE: {lang}. Respond in this language strictly."
+
+        messages = [SystemMessage(content=DIAGNOSTIC_PROMPT + lang_instr)] + list(state["messages"])
         response = await diagnostic_llm.ainvoke(messages)
         return {"messages": [response], "stage": "diagnostic"}
 
     async def advisory_node(state: AgentState):
-        raw_messages = list(state["messages"])
-
         config = await get_platform_config()
-        lang = config.get("default_language", "hi")
         force_kb = config.get("force_kb_approval", True)
-        strictness = config.get("rag_strictness_level", "medium")
-        lang_rules = _get_lang_rules(lang)
 
-        # Hard guard: do not allow advisory to proceed without KB retrieval.
-        if not _recent_has_retrieval(raw_messages):
-            forced_query = _build_retrieval_query(raw_messages)
-            words = forced_query.split()
+        if force_kb and not _recent_has_retrieval(state["messages"]):
+            forced_query = _build_retrieval_query(state["messages"])
+            logger.info("Hard guard: Forcing retrieve_context before advisory (force_kb_approval=True): %r", forced_query)
+            return {
+                "messages": [AIMessage(
+                    content="Ji, main abhi check karke batati hoon...",
+                    tool_calls=[{
+                        "name": "retrieve_context",
+                        "args": {"query": forced_query},
+                        "id": f"call_{uuid.uuid4().hex[:12]}"
+                    }]
+                )],
+                "stage": "advisory"
+            }
 
-            # If the farmer's description is still very short, stay in a
-            # diagnostic-style flow instead of paying full RAG cost.
-            if len(words) < 4:
-                logger.info(
-                    "Skipping RAG for very short advisory query (%d words). Staying diagnostic.",
-                    len(words),
-                )
-                prompt = BASE_RULES + lang_rules + DIAGNOSTIC_PROMPT + HANGUP_RULES
-                messages = [SystemMessage(content=prompt)] + raw_messages
-                response = await advisory_llm.ainvoke(messages)
-                return {"messages": [response], "stage": "diagnostic"}
+        lang = config.get("default_language", "hi")
+        lang_instr = f"\nUSER LANGUAGE: {lang}. Respond in this language strictly."
 
-            logger.info("Forcing retrieve_context before advisory response: query=%r", forced_query)
-
-            # Try to reuse any prefetched KB context for this session/query.
-            session_id = get_current_session_id()
-            kb_context: str | None = None
-            pref_key = (session_id, forced_query)
-            if pref_key in _prefetched_kb:
-                kb_context = _prefetched_kb.pop(pref_key)
-                logger.info("Using prefetched KB context for session=%s", session_id)
-            else:
-                rag_start = time.monotonic()
-                kb_context = await _retrieve_context_direct(query=forced_query)
-                rag_ms = (time.monotonic() - rag_start) * 1000
-                logger.info("On-demand RAG retrieve_context latency: %.2fms", rag_ms)
-
-            if (
-                "No relevant information found in the knowledge base." in kb_context
-                or kb_context.startswith("Retrieval error:")
-                or kb_context.startswith("Warning: Organisation context required")
-            ):
-                if force_kb:
-                    content = "माफ कीजियेगा, मेरे पास इसकी सटीक दवाई अभी नहीं है, मैं आपको एक कृषि विशेषज्ञ से बात करवा सकती हूँ।"
-                    if lang == "en": content = "I'm sorry, I don't have the exact medicine for this right now, I can connect you with an agricultural expert."
-                    elif lang == "pa": content = "ਮਾਫ ਕਰਨਾ, ਮੇਰੇ ਕੋਲ ਇਸ ਲਈ ਸਹੀ ਦਵਾਈ ਨਹੀਂ ਹੈ, ਮੈਂ ਤੁਹਾਨੂੰ ਇੱਕ ਖੇਤੀਬਾੜੀ ਮਾਹਿਰ ਨਾਲ ਜੋੜ ਸਕਦਾ ਹਾਂ।"
-                    elif lang == "mr": content = "क्षमस्व, माझ्याकडे सध्या यासाठी अचूक औषध नाही, मी तुम्हाला कृषी तज्ञाशी जोडून देऊ शकते."
-                    
-                    return {
-                        "messages": [AIMessage(content=content)],
-                        "stage": "advisory",
-                    }
-                else:
-                    logger.info("KB match empty but force_kb_approval is False. Allowing general response.")
-                    # Allow LLM to proceed without KB grounding
-                    prompt = BASE_RULES + lang_rules + ADVISORY_PROMPT + HANGUP_RULES
-                    messages = [SystemMessage(content=prompt)] + raw_messages
-                    response = await advisory_llm.ainvoke(messages)
-                    return {"messages": [response], "stage": "advisory"}
-
-            grounding_prompt = (
-                BASE_RULES + lang_rules + ADVISORY_PROMPT + HANGUP_RULES
-                + f"\n\nSTRICT GROUNDING RULE (Strictness: {strictness}):\nUse ONLY this retrieved context. If details are missing, do not guess medicines.\n\n"
-                + kb_context
-            )
-            response = await advisory_llm.ainvoke([SystemMessage(content=grounding_prompt)] + raw_messages)
-            return {"messages": [response], "stage": "advisory"}
-
-        messages = [SystemMessage(content=ADVISORY_PROMPT)] + raw_messages
+        messages = [SystemMessage(content=ADVISORY_PROMPT + lang_instr)] + list(state["messages"])
         response = await advisory_llm.ainvoke(messages)
+        logger.info("Advisory node response: %s", response.content)
         return {"messages": [response], "stage": "advisory"}
 
     # Intelligent Router (LLM decides when to switch stages)
-    # This prevents edge case routing bugs
-    async def stage_router(state: AgentState) -> str:
-        messages = state["messages"]
-        last_msg = messages[-1] if messages else None
-        
-        # Always handle tool calls natively
-        if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-            return "tools"
-        if getattr(last_msg, "type", "") == "tool":
-            return state.get("stage", "greeting")
+    async def stage_router_node(state: AgentState):
+        """Standard node that simply updates the stage in state."""
+        decision = stage_router(state)
+        logger.info(f"Deterministic router decision: {decision}")
+        return {"stage": decision}
 
-        # Emergency override: If the user explicitly asks for medicine, advice, or treatment, force ADVISORY stage
-        if isinstance(last_msg, HumanMessage):
-            user_text = last_msg.content.lower()
-            if any(word in user_text for word in ["dawai", "ilaj", "kya karun", "kya dalu", "medicine", "spray"]):
-                return "advisory"
-
-        # Routing decision based on conversation analysis
-        router_prompt = """You are a strict conversation router for an agricultural AI. Analyze the conversation history.
-Rule 1: If the farmer just called, return 'greeting'.
-Rule 2: If the AI is asking for name/location, return 'profiling'.
-Rule 3: If the AI is asking about crop symptoms, duration, or area, return 'diagnostic'.
-Rule 4: If the farmer has stated their symptoms AND is now waiting for a solution/medicine, you MUST return 'advisory'.
-Return ONLY ONE word: 'greeting', 'profiling', 'diagnostic', or 'advisory'."""
-
-        router_sys = SystemMessage(content=router_prompt)
-        
-        # Filter out tool-related messages to avoid OpenAI BadRequestError (code 400)
-        chat_history_for_router = []
-        for m in messages:
-            if getattr(m, "type", "") == "tool":
-                continue
-            if hasattr(m, "tool_calls") and m.tool_calls:
-                continue
-            if getattr(m, "content", ""):
-                chat_history_for_router.append(m)
-
-        try:
-            route_decision = await current_llm.ainvoke([router_sys] + chat_history_for_router[-5:]) # Look at recent text context
-            choice = route_decision.content.strip().lower()
-            if "advisory" in choice:
-                # Proactively start a background RAG prefetch so that by the
-                # time advisory_node runs, we likely already have KB context.
-                forced_query = _build_retrieval_query(messages)
-                session_id = get_current_session_id()
-                pref_key = (session_id, forced_query)
-
-                if forced_query and pref_key not in _prefetched_kb:
-                    async def _prefetch():
-                        try:
-                            logger.info(
-                                "Prefetching retrieve_context for session=%s query=%r",
-                                session_id,
-                                forced_query,
-                            )
-                            rag_start = time.monotonic()
-                            kb_ctx = await _retrieve_context_direct(query=forced_query)
-                            rag_ms = (time.monotonic() - rag_start) * 1000
-                            _prefetched_kb[pref_key] = kb_ctx
-                            logger.info(
-                                "Prefetch retrieve_context done in %.2fms for session=%s",
-                                rag_ms,
-                                session_id,
-                            )
-                        except Exception as e:
-                            logger.error("Prefetch retrieve_context failed: %s", e, exc_info=True)
-
-                    asyncio.create_task(_prefetch())
-
-                return "advisory"
-            if "diagnostic" in choice:
-                return "diagnostic"
-            if "profiling" in choice:
-                return "profiling"
+    def stage_router(state: AgentState) -> str:
+        messages = state.get("messages", [])
+        if not messages:
             return "greeting"
-        except Exception as e:
-            logger.error(f"Routing error: {e}")
-            return state.get("stage", "greeting") # Fallback to current stage
+
+        # 1. Look for most recent human input for context
+        user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
+        user_text = user_msg.content.lower() if user_msg else ""
+
+        # 2. Emergency Keywords (Immediate leap to advisory)
+        advisory_keywords = ["dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu"]
+        if any(word in user_text for word in advisory_keywords):
+            return "advisory"
+
+        # 3. Initial Start
+        if "__CALL_STARTED__" in user_text:
+            return "greeting"
+
+        # 4. Sequential Logic
+        current_stage = state.get("stage", "greeting")
+        
+        # Heuristic markers from history
+        has_name_loc = False
+        has_symptoms = False
+        
+        # Look back to see what we've accomplished
+        msg_debug = []
+        for msg in messages: # Look at all messages to ensure we don't forget stages
+            # Get type and tool call info for logging
+            m_type = type(msg).__name__
+            t_calls = getattr(msg, "tool_calls", [])
+            tc_names = [tc.get("name") for tc in t_calls] if t_calls else []
+            msg_debug.append(f"{m_type}(tools={tc_names})")
+
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    if tc["name"] == "update_farmer_profile":
+                        args = tc.get("args") or tc.get("arguments") or {}
+                        if args.get("name") or args.get("village"):
+                            has_name_loc = True
+                        if args.get("problem_area") or args.get("crop_age_days"):
+                            has_symptoms = True
+        
+        logger.info(f"Router Debug: stage={current_stage}, has_name_loc={has_name_loc}, has_symptoms={has_symptoms}, history_types={msg_debug}")
+        
+        if current_stage == "greeting":
+            if "__call_started__" in user_text:
+                return "greeting"
+            return "profiling"
+            
+        if current_stage == "profiling":
+            if has_name_loc and has_symptoms: return "advisory"
+            if has_name_loc: return "diagnostic"
+            if has_symptoms: return "diagnostic" # Move to diagnostic if symptoms but no location
+            return "profiling"
+            
+        if current_stage == "diagnostic":
+            if has_symptoms: return "advisory"
+            return "diagnostic"
+            
+        return current_stage
 
     # Build Graph
     workflow = StateGraph(AgentState)
@@ -824,23 +671,54 @@ Return ONLY ONE word: 'greeting', 'profiling', 'diagnostic', or 'advisory'."""
     workflow.add_node("tools", ToolNode(all_tools))
 
     # All nodes route back to the intelligent router after responding to user
-    workflow.add_conditional_edges(START, stage_router)
+    workflow.add_node("router", stage_router_node)
+    
+    workflow.add_edge(START, "router")
+    
+    def route_after_router(state: AgentState):
+        return state.get("stage", "greeting")
+
+    workflow.add_conditional_edges("router", route_after_router)
     
     def route_after_agent(state: AgentState):
         messages = state.get("messages", [])
         last_msg = messages[-1] if messages else None
+        
+        logger.info("Last AI message tool calls: %s", getattr(last_msg, "tool_calls", None))
+
         if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
             return "tools"
-        return END
+        
+        # If the LLM didn't call a tool but just learned something, 
+        # we might want to re-route instantly, but for voice we usually END.
+        # But per user request: "Change return END to return stage_router(state)"
+        # We return to router to allow another node to run if needed.
+        # SAFETY: If the last message was a text response from the agent, 
+        # we should probably END the turn to avoid the AI talking to itself.
+        # We'll use a simple heuristic: if it was a plain AIMessage without tool calls, END.
+        if isinstance(last_msg, AIMessage) and not last_msg.tool_calls:
+            return END
+            
+        return "router"
 
     workflow.add_conditional_edges("greeting", route_after_agent)
     workflow.add_conditional_edges("profiling", route_after_agent)
     workflow.add_conditional_edges("diagnostic", route_after_agent)
     workflow.add_conditional_edges("advisory", route_after_agent)
     
-    # Tool edge
-    workflow.add_conditional_edges("tools", lambda state: state.get("stage", "greeting"))
+    # Tool edge loops back to the router to decide the next stage
+    workflow.add_edge("tools", "router")
 
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+    from langgraph.checkpoint.memory import MemorySaver
+    
+    cp_type = "None"
+    if isinstance(checkpointer, AsyncPostgresSaver):
+        cp_type = "AsyncPostgresSaver"
+    elif isinstance(checkpointer, MemorySaver):
+        cp_type = "MemorySaver"
+        
+    logger.info("Compiling graph with checkpointer type: %s", cp_type)
     executor = workflow.compile(checkpointer=checkpointer)
     _agent_cache[cache_key] = executor
     return executor

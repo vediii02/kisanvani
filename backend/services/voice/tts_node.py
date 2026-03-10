@@ -14,9 +14,8 @@ logger = setup_logger("tts_node")
 load_dotenv()
 
 class SarvamTTS:
-    def __init__(self, api_key: str = None, language_code: str = "hi-IN"):
+    def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("SARVAM_API_KEY")
-        self.language_code = language_code
         self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
         self._ws_context = None
         self._ws = None
@@ -33,7 +32,7 @@ class SarvamTTS:
                     self._ws = await self._ws_context.__aenter__()
                     # Configure the TTS connection
                     await self._ws.configure(
-                        target_language_code=self.language_code,
+                        target_language_code="hi-IN",
                         speaker="pooja",
                         speech_sample_rate=8000,
                         output_audio_codec="linear16"
@@ -98,22 +97,12 @@ class SarvamTTS:
                 logger.info("Connection closed.")
 
 class GoogleTTS:
-    def __init__(self, language_code: str = "hi-IN"):
+    def __init__(self):
         from google.cloud import texttospeech
         self._tts_module = texttospeech
         self.client = texttospeech.TextToSpeechAsyncClient()
-        
-        # Determine voice name based on language
-        voice_name = "hi-IN-Wavenet-A"
-        if "en" in language_code:
-            voice_name = "en-IN-Wavenet-A"
-        elif "pa" in language_code:
-            voice_name = "pa-IN-Wavenet-A"
-        elif "mr" in language_code:
-            voice_name = "mr-IN-Wavenet-A"
-
         self.voice = texttospeech.VoiceSelectionParams(
-            language_code=language_code, name=voice_name
+            language_code="hi-IN", name="hi-IN-Wavenet-A"
         )
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
@@ -156,27 +145,13 @@ async def tts_stream(
     """
     config = await get_platform_config()
     tts_provider = config.get("tts_provider", "sarvam")
-    lang_code = config.get("default_language", "hi")
-
-    # Map short codes to full BCP-47 tags
-    lang_map = {
-        "hi": "hi-IN",
-        "en": "en-IN",
-        "pa": "pa-IN",
-        "mr": "mr-IN"
-    }
-    full_lang_code = lang_map.get(lang_code, "hi-IN")
     
     if tts_provider == "google":
-        logger.info(f"Using Google TTS with language: {full_lang_code}")
-        tts = GoogleTTS(language_code=full_lang_code)
+        logger.info("Using Google TTS")
+        tts = GoogleTTS()
     else:
-        logger.info(f"Using Sarvam TTS with language: {full_lang_code}")
-        tts = SarvamTTS(language_code=full_lang_code)
-
-    # Pre-warm connection for Sarvam TTS to avoid handshake delay on first chunk
-    if isinstance(tts, SarvamTTS):
-        asyncio.create_task(tts._ensure_connection())
+        logger.info("Using Sarvam TTS")
+        tts = SarvamTTS()
 
     async def upstream_listener():
         """Consumes events from Agent/Upstream and puts them in output queue."""

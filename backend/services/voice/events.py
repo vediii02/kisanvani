@@ -4,32 +4,24 @@ from pydantic import BaseModel
 class VoiceAgentEvent(BaseModel):
     """Base event for the voice agent pipeline."""
     type: str
+    session_id: str | None = None
 
 
 class CallStartedEvent(VoiceAgentEvent):
     """Synthetic event emitted immediately when a call connects, to kick off the pipeline."""
 
     @classmethod
-    def create(cls):
-        return cls(type="call_started")
+    def create(cls, session_id: str | None = None):
+        return cls(type="call_started", session_id=session_id)
 
 
 class STTChunkEvent(VoiceAgentEvent):
-    """Real-time STT snippets—high frequency, used for UI."""
+    """Interim STT result."""
     transcript: str
 
     @classmethod
     def create(cls, transcript: str):
         return cls(type="stt_chunk", transcript=transcript)
-
-
-class STTInterimEvent(VoiceAgentEvent):
-    """High-confidence interim STT result — used for speculative LLM triggering."""
-    transcript: str
-
-    @classmethod
-    def create(cls, transcript: str):
-        return cls(type="stt_interim", transcript=transcript)
 
 
 class STTOutputEvent(VoiceAgentEvent):
@@ -65,12 +57,3 @@ class TTSChunkEvent(VoiceAgentEvent):
     @classmethod
     def create(cls, audio: bytes):
         return cls(type="tts_chunk", audio=audio)
-
-
-class HangupEvent(VoiceAgentEvent):
-    """Signal to close the connection."""
-    reason: str | None = None
-
-    @classmethod
-    def create(cls, reason: str | None = None):
-        return cls(type="hangup", reason=reason)
