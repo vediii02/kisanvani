@@ -428,8 +428,8 @@ async def update_farmer_profile(
 
 @tool
 async def end_call() -> str:
-    """Use this tool when the conversation has naturally concluded and the user has said goodbye, or if the user asks you to cut the call.
-    This will send a signal to immediately hang up the phone call.
+    """Use this tool IMMEDIATELY when the user says goodbye, namaste, hang up, "phone kaat do", "band kar raha hu", or explicitly ends the conversation.
+    You MUST call this tool to physically drop the call. Do not just say goodbye without calling this tool.
     """
     logger.info("Agent invoked end_call tool.")
     from services.voice.session_context import get_current_session_id
@@ -473,6 +473,7 @@ RULES:
 - STRICT FORMATTING: Speak ONLY in short spoken sentences. Do NOT use bullet points, bold text, markdown, or lists. ONLY plain text.
 - Ask ONLY ONE short question at a time. Do not overwhelm the user.
 - EXPERT RULE: You MUST use tools for any technical, diagnostic, or product-related questions. Do NOT answer from your internal knowledge if a tool is available.
+- HANGUP RULE: If the user says goodbye, namaste, "phone kaat do", "band kar de raha hu", or implies they are hanging up, you MUST immediately use the `end_call` tool. Do not just output text, you MUST call the tool.
 - If you receive "__USER_SILENCE__", say: "Hello, kya aap mujhe sun pa rahe hain?"
 - If you receive "__USER_SILENCE_FINAL__", say: "Aapki aawaz nahi aa rahi hai. Main call kaat rahi hoon. Namaste!"
 """
