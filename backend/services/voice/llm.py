@@ -250,11 +250,11 @@ async def retrieve_context(query: str, organisation_id: int | None = None, compa
 
 @tool
 async def diagnose_problem(query: str) -> str:
-    """Use this tool to find the crop disease or problem from expert PDF documents.
-    ONLY use this during the DIAGNOSTIC stage after gathering initial symptoms.
+    """Find the crop disease, insects, or problems from expert PDF documents.
+    Always use this tool when the user asks about crop issues or general agricultural information (like protein content).
     
     Args:
-        query: Search query (e.g. 'paddy leaf brownish spots')
+        query: Highly specific search query in English (e.g. 'soybean leaf yellowing symptoms')
     """
     logger.info("Chroma Diagnostic Search: %s", query)
     results = await chroma_service.query_diagnostics(query)
@@ -446,6 +446,7 @@ RULES:
 - deeply empathetic. Acknowledge crop problems with concern.
 - SHORT spoken sentences. No lists or markdown. Plain text only.
 - Ask ONLY ONE question at a time.
+- EXPERT RULE: You MUST use tools for any technical, diagnostic, or product-related questions. Do NOT answer from your internal knowledge if a tool is available.
 - If you receive "__USER_SILENCE__", say: "Hello, kya aap mujhe sun pa rahe hain?"
 - If you receive "__USER_SILENCE_FINAL__", say: "Aapki aawaz nahi aa rahi hai. Main call kaat rahi hoon. Namaste!"
 """
@@ -454,13 +455,14 @@ GREETING_PROMPT = BASE_RULES + """
 Current Stage: GREETING & CONSENT
 When you receive "__CALL_STARTED__", greet the farmer warmly:
 - "Namaste! Main KisanVani se, aapki Krishi Sahayak bol rahi hoon. Asha karti hoon aap theek honge. (Yeh call quality ke liye record ho rahi hai). Boliye, aaj main aapki kya madad kar sakti hoon?"
-- Do NOT force them to explicitly say "yes" to recording unless they object.
-- If they ask a question immediately, answer it. Otherwise, politely ask for their name: "Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"
+- If they ask a technical or diagnostic question immediately, USE THE `diagnose_problem` TOOL FIRST before asking for their name.
+- Otherwise, politely ask for their name: "Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"
 """
 
 PROFILING_PROMPT = BASE_RULES + """
 Current Stage: FARMER PROFILING
-MANDATORY TOOL RULE: Use `update_farmer_profile` tool IMMEDIATELY the moment you learn a new detail (name, village, etc.). DO NOT wait!
+MANDATORY TOOL RULE: Use `update_farmer_profile` tool IMMEDIATELY the moment you learn a new detail (name, village, etc.).
+KNOWLEDGE RULE: If the farmer asks a question about their crop, variety, or a disease during profiling, USE THE `diagnose_problem` TOOL IMMEDIATELY.
 
 Your goal is to learn their basic information to save in the database.
 Gather these specific details naturally:
@@ -468,28 +470,38 @@ Gather these specific details naturally:
 2. Location (`village`, `district`, `state`)
 3. Total land size (`land_size`)
 4. The crop they planted (`crop_type`)
-
-- If they tell you their problem, acknowledge it FIRST, then gently ask for the missing profile details (e.g. location or land size).
-- Once you know these basic details, gently steer to the specific crop problem.
 """
 
 DIAGNOSTIC_PROMPT = BASE_RULES + """
 Current Stage: DIAGNOSTIC (CROP & PROBLEM IDENTIFICATION)
 Be like a caring doctor trying to diagnose a patient.
-1. You MUST gather symptoms: `crop_age_days`, `crop_area`, and `problem_area`.
-2. Use `update_farmer_profile` to save these details.
-3. Once symptoms are clear, use the `diagnose_problem` tool to find the exact issue from expert documents.
-4. Do NOT suggest products yet.
-5. After diagnosis, reassure the farmer and let the router move you to Advisory.
+
+1. **CHROMA-BASED PROACTIVE DIAGNOSIS**:
+   - As soon as you know the crop name (e.g., 'Soybean'), use the `diagnose_problem` tool (e.g., `diagnose_problem(query="Soybean issues")`) to find common diseases/pests for that crop in the expert documents.
+   - Use the results to ask targeted questions. For example, if the tool mentions 'Yellow Mosaic Virus causes yellowing of leaves', you should ask: "Kya pattiyaan peeli pad rahi hain?" (Are the leaves turning yellow?)
+   - This helps narrow down the problem much faster than asking generic questions.
+
+2. **SYMBOLIC SYMPTOMS**:
+   - Gather critical context: `crop_age_days` (approx), `crop_area`, and `problem_area` (leaves, stem, roots).
+   - Use `update_farmer_profile` frequently to save all gathered details.
+
+3. **MANDATORY TOOL RULE**:
+   - If the user asks ANY question about crop diseases, pests, variety, or "how/why" questions, you MUST use the `diagnose_problem` tool immediately.
+   - DO NOT answer from your memory.
+
+4. Do NOT suggest specific products yet (that happens in the next stage).
+5. After a successful diagnosis from the tool, reassure the farmer with concern.
 """
 
 ADVISORY_PROMPT = BASE_RULES + """
 Current Stage: ADVISORY
 You now understand the farmer's problem perfectly. 
-1. You MUST use the `suggest_products` tool to find actual products for the diagnosed problem.
-2. Based ONLY on the retrieved product info, give clear recommendations.
-3. If no products are found, say: "Maaf kijiyega, hamare paas iski satik dawai abhi nahi hai."
-4. Close by asking if they need any other help.
+
+1. **PRODUCT SEARCH**: Use the `suggest_products` tool to find actual products for the diagnosed problem.
+2. **RECOMMENDATION**: Based ONLY on the retrieved product info, give clear recommendations.
+3. **FLEXIBILITY**: If the farmer asks a general question (e.g., "how many diseases occur in soybean?"), use the `diagnose_problem` tool to answer first, even if you are in the advisory stage.
+4. **FALLBACK**: Only if no products OR diagnostic info are found, say: "Maaf kijiyega, hamare paas iski satik dawai ya jankari abhi nahi hai."
+5. Close by asking if they need any other help.
 """
 
 # ==========================================
@@ -554,18 +566,21 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         diagnostic_tools = [update_farmer_profile_scoped, diagnose_problem_scoped]
         advisory_tools = [suggest_products_scoped]
 
-    # Initialize node LLMs with stage-specific tools
-    greeting_llm = current_llm.bind_tools([])
-    profiling_llm = current_llm.bind_tools(profiling_tools)
-    diagnostic_llm = current_llm.bind_tools(diagnostic_tools)
-    advisory_llm = current_llm.bind_tools(advisory_tools)
-    all_tools = profiling_tools + diagnostic_tools + advisory_tools # In profiling_tools there is update_farmer_profile_scoped, in diagnostic_tools there is update_farmer_profile_scoped and diagnose_problem_scoped. We need unique set.
+    # Initialize node LLMs with ALL staged tools to handle any query type at any time
+    all_staged_tools = profiling_tools + diagnostic_tools + advisory_tools 
     unique_tools = []
     seen_tool_names = set()
-    for t in all_tools:
+    for t in all_staged_tools:
         if t.name not in seen_tool_names:
             unique_tools.append(t)
             seen_tool_names.add(t.name)
+    
+    # Bind the FULL toolset to EVERY node
+    # This allows the agent to diagnose during profiling, or profile during advisory.
+    greeting_llm = current_llm.bind_tools(unique_tools)
+    profiling_llm = current_llm.bind_tools(unique_tools)
+    diagnostic_llm = current_llm.bind_tools(unique_tools)
+    advisory_llm = current_llm.bind_tools(unique_tools)
 
     # Node Functions
     async def greeting_node(state: AgentState):
@@ -630,9 +645,13 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         user_text = user_msg.content.lower() if user_msg else ""
 
-        # 2. Emergency Keywords (Bypass profiling, but MUST diagnose first)
-        advisory_keywords = ["dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu"]
-        if any(word in user_text for word in advisory_keywords):
+        # 2. Urgent Keywords (Bypass profiling, but MUST diagnose first)
+        urgent_keywords = [
+            "dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu", 
+            "protein", "variety", "bimari", "keeda", "keede", "pests", "yield", "pesticide",
+            "insecticide", "fertilizer", "khad", "rog"
+        ]
+        if any(word in user_text for word in urgent_keywords):
             return "diagnostic"
 
         # 3. Initial Start
