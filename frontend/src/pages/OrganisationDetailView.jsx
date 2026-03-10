@@ -540,7 +540,7 @@ const OrganisationDetailView = () => {
                         <tr key={company.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <Store className="h-5 w-5 text-blue-500" />
+                              <PhoneCall className="h-5 w-5 text-blue-500" />
                               <span className="font-medium">{company.name}</span>
                             </div>
                           </td>
