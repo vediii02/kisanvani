@@ -630,10 +630,10 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         user_text = user_msg.content.lower() if user_msg else ""
 
-        # 2. Emergency Keywords (Immediate leap to advisory)
+        # 2. Emergency Keywords (Bypass profiling, but MUST diagnose first)
         advisory_keywords = ["dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu"]
         if any(word in user_text for word in advisory_keywords):
-            return "advisory"
+            return "diagnostic"
 
         # 3. Initial Start
         if "__CALL_STARTED__" in user_text:
