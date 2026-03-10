@@ -68,6 +68,32 @@ async def agent_stream(
 
             executor = await get_agent_executor(org_id, comp_id)
             
+
+            # Proactive state healing before invoking the LLM
+            # If the previous turn was interrupted during a tool call,
+            # LangGraph state will contain an AIMessage with tool_calls but no matching ToolMessage.
+            try:
+                state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
+                messages = state.values.get("messages", [])
+                if messages:
+                    last_msg = messages[-1]
+                    if getattr(last_msg, "tool_calls", None):
+                        logger.warning(f"Proactive state healer found dangling tool calls in message {last_msg.id}. Patching...")
+                        from langchain_core.messages import AIMessage
+                        # Overwrite the message to remove the dangling tool calls
+                        new_msg = AIMessage(
+                            content=last_msg.content or "[Action interrupted by user]",
+                            id=last_msg.id,
+                            tool_calls=[]
+                        )
+                        await executor.aupdate_state(
+                            {"configurable": {"thread_id": thread_id}},
+                            {"messages": [new_msg]}
+                        )
+                        logger.info("Successfully patched dangling tool calls before LLM invocation.")
+            except Exception as e:
+                logger.debug(f"State healer skipped (normal for new sessions): {e}")
+
             stream = executor.astream(
                 {"messages": [HumanMessage(content=text)]},
                 {"configurable": {"thread_id": thread_id}},
@@ -110,15 +136,16 @@ async def agent_stream(
                     if not chunk.strip():
                         continue
 
+                    # Fast streaming chunker: pushes immediately when a sentence ends
+                    # Reduces "time to first audio" latency significantly
                     for char in chunk:
                         current_sentence += char
-                        if char in ['.', '!', '?', '।', '\n']:
+                        # Trigger on common Hindi/English sentence terminators
+                        if char in {'.', '!', '?', '।', '\n'}:
                             sentence = current_sentence.strip()
                             if sentence:
                                 logger.info(f"Agent says: {sentence}")
-                                await output_queue.put(
-                                    AgentChunkEvent.create(sentence)
-                                )
+                                await output_queue.put(AgentChunkEvent.create(sentence))
                             current_sentence = ""
 
             final = current_sentence.strip()
@@ -130,9 +157,9 @@ async def agent_stream(
         except Exception as e:
             error_str = str(e)
             if "tool_calls" in error_str and ("ToolMessage" in error_str or "not have response messages" in error_str or "400" in error_str or "invalid_request_error" in error_str):
-                logger.warning("Detected tool call state corruption. Attempting to fix state by removing dangling tool calls.")
+                logger.warning("Detected tool call state corruption despite proactive healer. Attempting to fix state by removing dangling tool calls.")
                 try:
-                    state = await session_agent_executor.aget_state({"configurable": {"thread_id": thread_id}})
+                    state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
                     messages = state.values.get("messages", [])
                     
                     patched = False
@@ -145,7 +172,7 @@ async def agent_stream(
                                 id=msg.id,
                                 tool_calls=[]
                             )
-                            await session_agent_executor.aupdate_state(
+                            await executor.aupdate_state(
                                 {"configurable": {"thread_id": thread_id}},
                                 {"messages": [new_msg]}
                             )
