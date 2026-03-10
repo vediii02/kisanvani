@@ -500,7 +500,8 @@ You now understand the farmer's problem perfectly.
 2. **RECOMMENDATION**: Based ONLY on the retrieved product info, give clear recommendations. Do not list them out with numbers. Speak them naturally in a sentence.
 3. **FLEXIBILITY**: If the farmer asks a general question (e.g., "how many diseases occur in soybean?"), use the `diagnose_problem` tool to answer first, even if you are in the advisory stage.
 4. **FALLBACK**: Only if no products OR diagnostic info are found, say: "Maaf kijiyega, is samay mere paas iski satik jankari nahi hai."
-5. Close by asking if they need any other help.
+5. **GATHER MISSING PROFILE INFO**: If you were forced to jump to this stage early, you MUST politely ask the user for their name or village if you haven't already. Use `update_farmer_profile` if they give it to you.
+6. Close by asking if they need any other help.
 """
 
 # ==========================================
@@ -526,7 +527,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     if organisation_id is None:
         profiling_tools = [update_farmer_profile]
         diagnostic_tools = [update_farmer_profile, diagnose_problem]
-        advisory_tools = [suggest_products]
+        advisory_tools = [suggest_products, update_farmer_profile]
     else:
         _diagnose_problem_fn = diagnose_problem.coroutine
         _suggest_products_fn = suggest_products.coroutine
@@ -563,7 +564,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
         profiling_tools = [update_farmer_profile_scoped]
         diagnostic_tools = [update_farmer_profile_scoped, diagnose_problem_scoped]
-        advisory_tools = [suggest_products_scoped]
+        advisory_tools = [suggest_products_scoped, update_farmer_profile_scoped]
 
     # Extract unique tools into a dict for easy lookup
     all_staged_tools = profiling_tools + diagnostic_tools + advisory_tools 
@@ -571,7 +572,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     for t in all_staged_tools:
         if getattr(t, "name", None):
             tools_by_name[t.name] = t
-    
+
     # We still need a master list of unique tools for the ToolNode
     unique_tools = list(tools_by_name.values())
 
@@ -581,12 +582,12 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         greeting_tools = [diagnose_problem]
         profiling_tools_bound = [update_farmer_profile, diagnose_problem]
         diagnostic_tools_bound = [diagnose_problem, update_farmer_profile]
-        advisory_tools_bound = [suggest_products, diagnose_problem]
+        advisory_tools_bound = [suggest_products, diagnose_problem, update_farmer_profile]
     else:
         greeting_tools = [diagnose_problem_scoped]
         profiling_tools_bound = [update_farmer_profile_scoped, diagnose_problem_scoped]
         diagnostic_tools_bound = [diagnose_problem_scoped, update_farmer_profile_scoped]
-        advisory_tools_bound = [suggest_products_scoped, diagnose_problem_scoped]
+        advisory_tools_bound = [suggest_products_scoped, diagnose_problem_scoped, update_farmer_profile_scoped]
 
     greeting_llm = current_llm.bind_tools(greeting_tools)
     profiling_llm = current_llm.bind_tools(profiling_tools_bound)
@@ -656,30 +657,12 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         user_text = user_msg.content.lower() if user_msg else ""
 
-        # 2. Urgent Keywords (Bypass profiling, but MUST diagnose first)
-        urgent_keywords = [
-            "dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu", 
-            "protein", "variety", "bimari", "keeda", "keede", "pests", "yield", "pesticide",
-            "insecticide", "fertilizer", "khad", "rog"
-        ]
-        if any(word in user_text for word in urgent_keywords):
-            return "diagnostic"
-
-        # 3. Initial Start
-        if "__CALL_STARTED__" in user_text:
-            return "greeting"
-
-        # 4. Sequential Logic
-        current_stage = state.get("stage", "greeting")
-        
-        # Heuristic markers from history
-        has_name_loc = False
-        has_symptoms = False
-        
-        # Look back to see what we've accomplished
+        # 2. Look back to see what we've accomplished
         msg_debug = []
         has_diagnosis = False
         has_crop = False
+        has_name_loc = False
+        has_symptoms = False
 
         # Parse history more strictly to be deterministic
         for msg in messages: 
@@ -703,6 +686,30 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
                         # We only consider diagnosis complete if the tool actually ran
                         # This prevents premature jumping if the LLM hallucinated
                         has_diagnosis = True
+
+        # 3. Urgent Product Keywords Bypass
+        # If the user explicitly asks for a product AND we have already diagnosed the problem,
+        # we bypass profiling entirely and jump to advisory to suggest products.
+        product_keywords = ["dawai", "ilaj", "product", "medicine", "suggest", "konsa", "kaunsa", "konsi"]
+        if any(word in user_text for word in product_keywords) and has_diagnosis:
+            logger.info("Urgent product keyword detected. Bypassing directly to advisory.")
+            return "advisory"
+
+        # 4. Urgent Diagnostic Keywords (Bypass profiling, but MUST diagnose first)
+        urgent_keywords = [
+            "upay", "spray", "solution", "kya dalu", "kya karu",
+            "protein", "variety", "bimari", "keeda", "keede", "pests", "yield", "pesticide",
+            "insecticide", "fertilizer", "khad", "rog"
+        ]
+        if any(word in user_text for word in urgent_keywords):
+            return "diagnostic"
+
+        # 5. Initial Start
+        if "__CALL_STARTED__" in user_text:
+            return "greeting"
+
+        # 6. Sequential Logic
+        current_stage = state.get("stage", "greeting")
         
         logger.info(f"Router Debug: stage={current_stage}, has_diagnosis={has_diagnosis}, has_name_loc={has_name_loc}, has_crop={has_crop}, has_symptoms={has_symptoms}")
         
