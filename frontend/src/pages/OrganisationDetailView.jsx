@@ -20,7 +20,8 @@ import {
   Hash,
   Crown,
   Store,
-  Loader2
+  Loader2,
+  Info
 } from 'lucide-react';
 import api from '../api/api';
 
@@ -115,12 +116,19 @@ const OrganisationDetailView = () => {
     );
   }
 
+  const totalPhoneNumbers = companies.reduce((acc, company) => {
+    let count = 0;
+    if (company.phone && company.phone.trim() !== '') count++;
+    if (company.secondary_phone && company.secondary_phone.trim() !== '') count++;
+    return acc + count;
+  }, 0);
+
   const tabs = [
     { id: 'overview', label: 'Overview', icon: Building2 },
     { id: 'companies', label: `Companies (${organisation.company_count || companies.length || 0})`, icon: Store },
     { id: 'brands', label: `Brands (${organisation.brand_count || 0})`, icon: Tag },
     { id: 'products', label: `Products (${organisation.product_count || 0})`, icon: Package },
-    { id: 'phones', label: `Phone Numbers (${companies.reduce((acc, company) => acc + company.phone_count, 0) || 0})`, icon: Phone },
+    { id: 'phones', label: `Phone Numbers (${totalPhoneNumbers})`, icon: Phone },
     { id: 'calls', label: `Total Calls (${organisation.call_count || callLogs.length || 0})`, icon: PhoneCall },
   ];
 
@@ -201,7 +209,7 @@ const OrganisationDetailView = () => {
               <p className="text-gray-600 text-sm">Brands</p>
               <p className="text-3xl font-bold text-purple-600">{organisation.brand_count || 0}</p>
             </div>
-            <Package className="h-10 w-10 text-purple-500" />
+            <Tag className="h-10 w-10 text-purple-500" />
           </div>
         </div>
 
@@ -211,7 +219,7 @@ const OrganisationDetailView = () => {
               <p className="text-gray-600 text-sm">Products</p>
               <p className="text-3xl font-bold text-green-600">{organisation.product_count || 0}</p>
             </div>
-            <Tag className="h-10 w-10 text-green-500" />
+            <Package className="h-10 w-10 text-green-500" />
           </div>
         </div>
 
@@ -219,7 +227,7 @@ const OrganisationDetailView = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm">Phone Numbers</p>
-              <p className="text-3xl font-bold text-blue-600">{organisation.phone_count || 0}</p>
+              <p className="text-3xl font-bold text-blue-600">{totalPhoneNumbers}</p>
             </div>
             <Phone className="h-10 w-10 text-blue-500" />
           </div>
@@ -229,7 +237,7 @@ const OrganisationDetailView = () => {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-gray-600 text-sm">Total Calls</p>
-              <p className="text-3xl font-bold text-indigo-600">{organisation.call_count || 0}</p>
+              <p className="text-3xl font-bold text-indigo-600">{organisation.call_count || callLogs.length || 0}</p>
             </div>
             <PhoneCall className="h-10 w-10 text-indigo-500" />
           </div>
@@ -382,7 +390,7 @@ const OrganisationDetailView = () => {
                         <tr key={company.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <Store className="h-5 w-5 text-orange-500" />
+                              <Store className="h-5 w-5 text-gray-500" />
                               <span className="font-medium">{company.name}</span>
                             </div>
                           </td>
@@ -416,7 +424,7 @@ const OrganisationDetailView = () => {
               <h3 className="text-lg font-bold mb-4">Brands ({brands.length}) - View Only</h3>
               {brands.length === 0 ? (
                 <div className="text-center py-12">
-                  <Package className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <Tag className="h-16 w-16 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500 text-lg">No brands registered</p>
                 </div>
               ) : (
@@ -434,7 +442,7 @@ const OrganisationDetailView = () => {
                       <tr key={brand.id} className="hover:bg-gray-50">
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <Package className="h-5 w-5 text-purple-500" />
+                            <Tag className="h-5 w-5 text-purple-500" />
                             <span className="font-medium">{brand.name}</span>
                           </div>
                         </td>
@@ -461,7 +469,7 @@ const OrganisationDetailView = () => {
               <h3 className="text-lg font-bold mb-4">Products ({products.length}) - View Only</h3>
               {products.length === 0 ? (
                 <div className="text-center py-12">
-                  <Tag className="h-16 w-16 text-gray-300 mx-auto mb-3" />
+                  <Package className="h-16 w-16 text-gray-300 mx-auto mb-3" />
                   <p className="text-gray-500 text-lg">No products registered</p>
                 </div>
               ) : (
@@ -481,7 +489,7 @@ const OrganisationDetailView = () => {
                         <tr key={product.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <Tag className="h-4 w-4 text-green-500" />
+                              <Package className="h-4 w-4 text-green-500" />
                               <span className="font-medium">{product.name}</span>
                             </div>
                           </td>
@@ -532,7 +540,7 @@ const OrganisationDetailView = () => {
                         <tr key={company.id} className="hover:bg-gray-50">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <Store className="h-5 w-5 text-orange-500" />
+                              <Store className="h-5 w-5 text-blue-500" />
                               <span className="font-medium">{company.name}</span>
                             </div>
                           </td>

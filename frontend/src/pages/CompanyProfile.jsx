@@ -346,14 +346,14 @@ export default function CompanyProfile() {
             </div>
 
             <div>
-              <Label htmlFor="alternate_phone">Alternate Phone Number</Label>
+              <Label htmlFor="alternate_phone">Secondary Phone Number</Label>
               <Input
                 id="alternate_phone"
                 value={companyData.alternate_phone}
                 onChange={(e) => handleInputChange('alternate_phone', e.target.value)}
                 disabled={!editing}
                 className="mt-1"
-                placeholder="+91 98765 43211"
+                placeholder="+919876543211"
               />
             </div>
 

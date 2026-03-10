@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Building2, Plus, Edit2, Trash2, Search, Phone, Mail, MapPin, Users, Package } from 'lucide-react';
+import { Building2, Plus, Edit2, Trash2, Search, Phone, Mail, MapPin, Users, Package, PhoneCall, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/api/api';
 import { Badge } from '@/components/ui/badge';
@@ -257,6 +257,64 @@ export default function OrganisationCompanies() {
         </div>
       </Card>
 
+      {/* Call Forwarding Setup Instructions */}
+      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 relative overflow-hidden group mb-6">
+        <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform duration-500">
+          <PhoneCall className="h-24 w-24 text-blue-400" />
+        </div>
+        <div className="flex items-start gap-4 relative z-10">
+          <div className="p-2 bg-blue-100 rounded-lg shrink-0">
+            <Info className="h-6 w-6 text-blue-600" />
+          </div>
+          <div className="w-full">
+            <h4 className="font-bold text-gray-800 text-lg tracking-tight mb-2">Important: Call Forwarding Setup</h4>
+            <p className="text-gray-500 text-sm font-medium mb-6 max-w-3xl leading-relaxed">
+              To begin receiving advisory calls, companies must set their phones to forward incoming calls to their assigned Virtual Number. Use these standard USSD codes to manage call forwarding.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Step 1: Turn OFF */}
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex flex-col h-full">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="h-6 w-6 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                  <h5 className="font-bold text-gray-800">To Turn OFF Call Forwarding (Deactivate)</h5>
+                </div>
+                <p className="text-gray-500 text-xs mb-auto">When you are done testing and want the company phone to ring normally again, pick up the company's mobile phone and dial:</p>
+                <div className="mt-4 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 text-center">
+                  <code className="text-lg text-gray-800 font-mono font-bold tracking-widest">##21#</code>
+                </div>
+              </div>
+
+              {/* Step 2: Turn ON */}
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm shadow-gray-50/50 flex flex-col h-full ring-1 ring-gray-50">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="h-6 w-6 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <h5 className="font-bold text-gray-800">To Turn ON Call Forwarding (Activate for Testing)</h5>
+                </div>
+                <p className="text-gray-500 text-xs mb-auto">When you are ready to test the AI voice agent, pick up the company's mobile phone and dial:</p>
+                <div className="mt-4 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 text-center flex flex-col items-center">
+                  <code className="text-lg text-gray-800 font-mono font-bold whitespace-nowrap">
+                    **21*02249360001#
+                  </code>
+                </div>
+              </div>
+
+              {/* Step 3: Check Status */}
+              <div className="bg-white rounded-xl p-5 border border-gray-200 shadow-sm flex flex-col h-full">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="h-6 w-6 rounded-full bg-gray-100 text-gray-700 flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <h5 className="font-bold text-gray-800">To CHECK the Status</h5>
+                </div>
+                <p className="text-gray-500 text-xs mb-auto">If you ever forget whether the forwarding is currently active or not to your virtual number, dial:</p>
+                <div className="mt-4 bg-gray-50 px-3 py-2 rounded-lg border border-gray-200 text-center">
+                  <code className="text-lg text-gray-800 font-mono font-bold tracking-widest">*#21#</code>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Companies List */}
       {loading && companies.length === 0 ? (
         <div className="text-center py-12">
@@ -345,16 +403,6 @@ export default function OrganisationCompanies() {
                     )}
                   </div>
 
-                  {/* <div className="flex gap-4 mt-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 text-muted-foreground" />
-                      <span>Max Company Users: <strong>{company.max_company_users || 5}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Package className="w-4 h-4 text-muted-foreground" />
-                      <span>Max Products: <strong>{company.max_products || 100}</strong></span>
-                    </div>
-                  </div> */}
 
                   {company.created_at && (
                     <p className="text-xs text-muted-foreground mt-3">
