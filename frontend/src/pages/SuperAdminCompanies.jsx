@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Loader2, Building2, Search, Edit, Trash2, Plus, Package, Phone, User as UserIcon } from 'lucide-react';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { toast } from 'sonner';
 import { getErrorMessage } from '@/lib/utils';
 import api from '../api/api';
@@ -85,6 +86,14 @@ export default function SuperAdminCompanies() {
     if (!emailRegex.test(formData.email)) {
       toast.error('Please enter a valid email address');
       return;
+    }
+
+    if (formData.phone) {
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(formData.phone)) {
+        toast.error('Contact phone must be +91 followed by 10 digits');
+        return;
+      }
     }
 
     if (!editingCompany) {
@@ -360,10 +369,9 @@ export default function SuperAdminCompanies() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <Label>Contact Phone</Label>
-                    <Input
+                    <PhoneInput
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      placeholder="+91 1234567890"
                     />
                   </div>
                   <div className="space-y-1">

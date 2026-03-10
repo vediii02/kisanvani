@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -90,6 +91,19 @@ export default function OrganisationProfile() {
   const handleSave = async () => {
     try {
       setSaving(true);
+
+      // Validate phone numbers
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(formData.phone_numbers)) {
+        toast.error('Primary phone number must be +91 followed by 10 digits');
+        setSaving(false);
+        return;
+      }
+      if (formData.secondary_phone && !phoneRegex.test(formData.secondary_phone)) {
+        toast.error('Secondary phone number must be +91 followed by 10 digits');
+        setSaving(false);
+        return;
+      }
 
       const updateData = {
         name: formData.name,
@@ -289,14 +303,13 @@ export default function OrganisationProfile() {
               <div>
                 <Label htmlFor="phone_numbers">Organisation Phone Number</Label>
                 <div className="relative mt-1">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                  <PhoneInput
                     id="phone_numbers"
                     value={formData.phone_numbers}
                     onChange={(e) => handleInputChange('phone_numbers', e.target.value)}
                     disabled={!editing}
                     className="pl-10 focus-visible:ring-slate-400"
-                    placeholder="+91 83109 01234"
                   />
                 </div>
               </div>
@@ -304,14 +317,13 @@ export default function OrganisationProfile() {
               <div>
                 <Label htmlFor="secondary_phone">Secondary Phone Number</Label>
                 <div className="relative mt-1">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                  <Input
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                  <PhoneInput
                     id="secondary_phone"
                     value={formData.secondary_phone}
                     onChange={(e) => handleInputChange('secondary_phone', e.target.value)}
                     disabled={!editing}
                     className="pl-10 focus-visible:ring-slate-400"
-                    placeholder="+91 98765 43210"
                   />
                 </div>
               </div>

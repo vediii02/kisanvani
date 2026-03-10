@@ -3,10 +3,11 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { User, Edit2, Save, X, Building, Phone, Mail, MapPin, Globe, FileText } from 'lucide-react';
+import { User, Edit2, Save, X, Building, Phone, Mail, MapPin, Globe, FileText, Smartphone } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '@/api/api';
 
@@ -105,6 +106,19 @@ export default function CompanyProfile() {
   const handleSave = async () => {
     try {
       setSaving(true);
+
+      // Validate phone numbers
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(companyData.phone)) {
+        toast.error('Primary phone number must be +91 followed by 10 digits');
+        setSaving(false);
+        return;
+      }
+      if (companyData.alternate_phone && !phoneRegex.test(companyData.alternate_phone)) {
+        toast.error('Secondary phone number must be +91 followed by 10 digits');
+        setSaving(false);
+        return;
+      }
 
       // Prepare data for API - map frontend fields to backend fields
       const updateData = {
@@ -313,8 +327,8 @@ export default function CompanyProfile() {
         {/* Contact Information */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Phone className="h-5 w-5" />
+            <CardTitle className="flex items-center gap-2 text-slate-900">
+              <Smartphone className="h-5 w-5 text-slate-500" />
               Contact Information
             </CardTitle>
             <CardDescription>
@@ -332,29 +346,32 @@ export default function CompanyProfile() {
                 className="mt-1"
               />
             </div>
-
             <div>
               <Label htmlFor="phone">Phone Number</Label>
-              <Input
-                id="phone"
-                placeholder="+919876543210"
-                value={companyData.phone}
-                onChange={(e) => handleInputChange('phone', e.target.value)}
-                disabled={!editing}
-                className="mt-1"
-              />
+              <div className="relative mt-1">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                <PhoneInput
+                  id="phone"
+                  value={companyData.phone}
+                  onChange={(e) => handleInputChange('phone', e.target.value)}
+                  disabled={!editing}
+                  className="pl-10 focus-visible:ring-slate-400 shadow-sm"
+                />
+              </div>
             </div>
 
             <div>
               <Label htmlFor="alternate_phone">Secondary Phone Number</Label>
-              <Input
-                id="alternate_phone"
-                value={companyData.alternate_phone}
-                onChange={(e) => handleInputChange('alternate_phone', e.target.value)}
-                disabled={!editing}
-                className="mt-1"
-                placeholder="+919876543211"
-              />
+              <div className="relative mt-1">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                <PhoneInput
+                  id="alternate_phone"
+                  value={companyData.alternate_phone}
+                  onChange={(e) => handleInputChange('alternate_phone', e.target.value)}
+                  disabled={!editing}
+                  className="pl-10 focus-visible:ring-slate-400 shadow-sm"
+                />
+              </div>
             </div>
 
             <div>

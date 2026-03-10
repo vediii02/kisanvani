@@ -25,6 +25,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -461,9 +462,8 @@ export default function OrganisationsPlatformManagement() {
                   <Phone className="h-4 w-4 text-blue-500" />
                   Contact Number
                 </Label>
-                <Input
-                  type="tel"
-                  placeholder="+91..."
+                <PhoneInput
+                  id="phone_numbers"
                   value={formData.phone_numbers}
                   onChange={(e) => setFormData({ ...formData, phone_numbers: e.target.value })}
                 />
@@ -616,8 +616,8 @@ export default function OrganisationsPlatformManagement() {
               </div>
               <div className="space-y-2">
                 <Label>Contact Number</Label>
-                <Input
-                  type="number"
+                <PhoneInput
+                  id="edit_phone_numbers"
                   value={formData.phone_numbers}
                   onChange={(e) => setFormData({ ...formData, phone_numbers: e.target.value })}
                 />

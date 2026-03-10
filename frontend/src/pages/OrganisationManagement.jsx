@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Loader2, Building2, Phone as PhoneIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -153,11 +154,10 @@ export default function OrganisationManagement() {
                 </div>
                 <div>
                   <Label htmlFor="phone_numbers">Primary Phone Number</Label>
-                  <Input
+                  <PhoneInput
                     id="phone_numbers"
                     value={newOrg.phone_numbers}
                     onChange={(e) => setNewOrg({ ...newOrg, phone_numbers: e.target.value })}
-                    placeholder="e.g., +91 9876543210"
                   />
                 </div>
                 <div>
@@ -243,12 +243,11 @@ export default function OrganisationManagement() {
             <div className="space-y-4 py-4">
               <div>
                 <Label htmlFor="phone">Phone Number</Label>
-                <Input
+                <PhoneInput
                   id="phone"
                   value={newPhone.phone_number}
                   onChange={(e) => setNewPhone({ ...newPhone, phone_number: e.target.value })}
                   required
-                  placeholder="+91 1800-XXX-XXX"
                 />
               </div>
               <div>

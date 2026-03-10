@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PhoneInput } from '@/components/ui/phone-input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -76,6 +77,14 @@ export default function OrganisationCompanies() {
       return;
     }
 
+    if (formData.phone) {
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(formData.phone)) {
+        toast.error('Contact phone must be +91 followed by 10 digits');
+        return;
+      }
+    }
+
     setLoading(true);
     try {
       await api.post('/organisation/companies', formData);
@@ -119,6 +128,14 @@ export default function OrganisationCompanies() {
     if (!formData.name) {
       toast.error('Company name is required');
       return;
+    }
+
+    if (formData.phone) {
+      const phoneRegex = /^\+91\d{10}$/;
+      if (!phoneRegex.test(formData.phone)) {
+        toast.error('Contact phone must be +91 followed by 10 digits');
+        return;
+      }
     }
 
     setLoading(true);
@@ -481,11 +498,10 @@ export default function OrganisationCompanies() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="phone">Contact Phone</Label>
-                <Input
+                <PhoneInput
                   id="phone"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                  placeholder="+91 1234567890"
                 />
               </div>
               <div>
@@ -680,7 +696,7 @@ export default function OrganisationCompanies() {
               </div>
               <div>
                 <Label htmlFor="edit_phone">Contact Phone</Label>
-                <Input
+                <PhoneInput
                   id="edit_phone"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
