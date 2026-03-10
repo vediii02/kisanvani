@@ -426,6 +426,32 @@ async def update_farmer_profile(
         logger.error("Failed to update farmer profile: %s", e, exc_info=True)
         return f"Error updating profile: {str(e)}"
 
+@tool
+async def end_call() -> str:
+    """Use this tool when the conversation has naturally concluded and the user has said goodbye, or if the user asks you to cut the call.
+    This will send a signal to immediately hang up the phone call.
+    """
+    logger.info("Agent invoked end_call tool.")
+    from services.voice.session_context import get_current_session_id
+    session_id = get_current_session_id()
+
+    if session_id:
+        try:
+            from db.models.call_session import CallSession
+            from sqlalchemy import update
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(CallSession)
+                    .where(CallSession.session_id == session_id)
+                    .values(status="completed")
+                )
+                await db.commit()
+            logger.info("Call session %s marked as completed via agent end_call tool.", session_id)
+        except Exception as e:
+            logger.error("Failed to mark call session as completed: %s", e)
+
+    return "Call ending sequence initiated. Say your final goodbye (e.g., 'Namaste')."
+
 
 # ==========================================
 # 4. Agent State & Prompts
@@ -527,11 +553,17 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     if organisation_id is None:
         profiling_tools = [update_farmer_profile]
         diagnostic_tools = [update_farmer_profile, diagnose_problem]
-        advisory_tools = [suggest_products, update_farmer_profile]
+        advisory_tools = [suggest_products, update_farmer_profile, end_call]
     else:
         _diagnose_problem_fn = diagnose_problem.coroutine
         _suggest_products_fn = suggest_products.coroutine
         _update_farmer_profile_fn = update_farmer_profile.coroutine
+        _end_call_fn = end_call.coroutine
+
+        @tool("end_call")
+        async def end_call_scoped() -> str:
+            """Send a signal to immediately hang up the phone call."""
+            return await _end_call_fn()
 
         @tool("diagnose_problem")
         async def diagnose_problem_scoped(query: str) -> str:
@@ -564,7 +596,7 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
         profiling_tools = [update_farmer_profile_scoped]
         diagnostic_tools = [update_farmer_profile_scoped, diagnose_problem_scoped]
-        advisory_tools = [suggest_products_scoped, update_farmer_profile_scoped]
+        advisory_tools = [suggest_products_scoped, update_farmer_profile_scoped, end_call_scoped]
 
     # Extract unique tools into a dict for easy lookup
     all_staged_tools = profiling_tools + diagnostic_tools + advisory_tools 
@@ -582,12 +614,18 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         greeting_tools = [diagnose_problem]
         profiling_tools_bound = [update_farmer_profile, diagnose_problem]
         diagnostic_tools_bound = [diagnose_problem, update_farmer_profile]
-        advisory_tools_bound = [suggest_products, diagnose_problem, update_farmer_profile]
+        advisory_tools_bound = [suggest_products, diagnose_problem, update_farmer_profile, end_call]
     else:
         greeting_tools = [diagnose_problem_scoped]
         profiling_tools_bound = [update_farmer_profile_scoped, diagnose_problem_scoped]
         diagnostic_tools_bound = [diagnose_problem_scoped, update_farmer_profile_scoped]
-        advisory_tools_bound = [suggest_products_scoped, diagnose_problem_scoped, update_farmer_profile_scoped]
+        advisory_tools_bound = [suggest_products_scoped, diagnose_problem_scoped, update_farmer_profile_scoped, end_call_scoped]
+
+    # The end_call tool is technically bound to advisory_tools_bound, but
+    # it can also be added to greeting/profiling if the user says "hang up" early.
+    greeting_tools.append(tools_by_name["end_call"])
+    profiling_tools_bound.append(tools_by_name["end_call"])
+    diagnostic_tools_bound.append(tools_by_name["end_call"])
 
     greeting_llm = current_llm.bind_tools(greeting_tools)
     profiling_llm = current_llm.bind_tools(profiling_tools_bound)

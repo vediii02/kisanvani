@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
-from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent
+from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent, HangupEvent
 from services.voice.llm import get_agent_executor
 from services.voice.logger import setup_logger
 from services.voice.session_context import get_current_organisation_id, get_current_company_id, get_current_session_id
@@ -119,8 +119,14 @@ async def agent_stream(
                 if getattr(message, "chunk", None) == False:
                     continue
 
-                # Skip tool calls/responses
-                is_tool = getattr(message, 'tool_calls', None) or getattr(message, 'tool_call_chunks', None)
+                # Detect specific tool calls for workflow control
+                is_tool = False
+                if getattr(message, 'tool_calls', None):
+                    is_tool = True
+                    for tool_call in message.tool_calls:
+                        if tool_call.get("name") == "end_call":
+                            logger.info("Agent decided to end the call via tool.")
+                            await output_queue.put(HangupEvent.create(reason="agent_ended_call"))
                 
                 if is_ai and message.content and not is_tool:
                     chunk = message.content
