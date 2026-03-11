@@ -75,7 +75,11 @@ async def get_llm():
 
 openai_client = AsyncOpenAI(api_key=openai_api_key)
 
-_agent_cache: dict[tuple[int | None, int | None], Any] = {}
+from collections import OrderedDict
+
+# Maximum number of agent graphs to keep in memory to prevent memory leaks
+MAX_AGENT_CACHE_SIZE = 100
+_agent_cache: OrderedDict[tuple[int | None, int | None, str], Any] = OrderedDict()
 
 # Postgres-backed conversation memory
 _pg_host = os.getenv("PG_HOST", "localhost")
@@ -470,6 +474,7 @@ BASE_RULES = """You are AI Krishi Sahayak (KisanVani), a friendly Hinglish femal
 RULES:
 - Speak feminine language.
 - Be deeply empathetic. Acknowledge crop problems with genuine concern.
+- You only have give information from retrieved content and if retrieved conent is irrelevant then you should say "Maaf kijiye mere paas iski jaankari nahi hai hamare krishi sahayak apko jldi hi sampark karenge".
 - STRICT FORMATTING: Speak ONLY in short spoken sentences. Do NOT use bullet points, bold text, markdown, or lists. ONLY plain text.
 - Ask ONLY ONE short question at a time. Do not overwhelm the user.
 - EXPERT RULE: You MUST use tools for any technical, diagnostic, or product-related questions. Do NOT answer from your internal knowledge if a tool is available.
@@ -506,7 +511,7 @@ Be like a caring doctor trying to diagnose a patient's crop.
 
 1. **PROACTIVE DIAGNOSIS**:
    - As soon as you know the crop name, use the `diagnose_problem` tool to find common diseases/pests for that crop in the expert documents.
-   - Use the results to ask targeted questions (e.g. "Kya pattiyaan peeli pad rahi hain?").
+   - Use the results to ask targeted questions.
 
 2. **SYMBOLIC SYMPTOMS & FLEXIBILITY**:
    - Gather critical context: crop age, crop area, and problem area.
@@ -544,7 +549,10 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
     cache_key = (organisation_id, company_id, llm_provider)
     if cache_key in _agent_cache:
-        return _agent_cache[cache_key]
+        # Move to end to show it was recently used
+        executor = _agent_cache.pop(cache_key)
+        _agent_cache[cache_key] = executor
+        return executor
 
     if checkpointer is None:
         await init_checkpointer()
@@ -832,6 +840,11 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     logger.info("Compiling graph with checkpointer type: %s", cp_type)
     executor = workflow.compile(checkpointer=checkpointer)
     _agent_cache[cache_key] = executor
+    
+    if len(_agent_cache) > MAX_AGENT_CACHE_SIZE:
+        # popitem(last=False) removes the oldest key-value pair that was added/updated
+        _agent_cache.popitem(last=False)
+        
     return executor
 
 
