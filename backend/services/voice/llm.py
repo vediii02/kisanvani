@@ -75,7 +75,11 @@ async def get_llm():
 
 openai_client = AsyncOpenAI(api_key=openai_api_key)
 
-_agent_cache: dict[tuple[int | None, int | None], Any] = {}
+from collections import OrderedDict
+
+# Maximum number of agent graphs to keep in memory to prevent memory leaks
+MAX_AGENT_CACHE_SIZE = 100
+_agent_cache: OrderedDict[tuple[int | None, int | None, str], Any] = OrderedDict()
 
 # Postgres-backed conversation memory
 _pg_host = os.getenv("PG_HOST", "localhost")
@@ -426,6 +430,32 @@ async def update_farmer_profile(
         logger.error("Failed to update farmer profile: %s", e, exc_info=True)
         return f"Error updating profile: {str(e)}"
 
+@tool
+async def end_call() -> str:
+    """Use this tool IMMEDIATELY when the user says goodbye, namaste, hang up, "phone kaat do", "band kar raha hu", or explicitly ends the conversation.
+    You MUST call this tool to physically drop the call. Do not just say goodbye without calling this tool.
+    """
+    logger.info("Agent invoked end_call tool.")
+    from services.voice.session_context import get_current_session_id
+    session_id = get_current_session_id()
+
+    if session_id:
+        try:
+            from db.models.call_session import CallSession
+            from sqlalchemy import update
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(CallSession)
+                    .where(CallSession.session_id == session_id)
+                    .values(status="completed")
+                )
+                await db.commit()
+            logger.info("Call session %s marked as completed via agent end_call tool.", session_id)
+        except Exception as e:
+            logger.error("Failed to mark call session as completed: %s", e)
+
+    return "Call ending sequence initiated. Say your final goodbye (e.g., 'Namaste')."
+
 
 # ==========================================
 # 4. Agent State & Prompts
@@ -442,11 +472,13 @@ class AgentState(TypedDict):
 
 BASE_RULES = """You are AI Krishi Sahayak (KisanVani), a friendly Hinglish female agricultural expert.
 RULES:
-- Speak feminine Hinglish (Hindi + English words like 'spray', 'dawai').
-- deeply empathetic. Acknowledge crop problems with concern.
-- SHORT spoken sentences. No lists or markdown. Plain text only.
-- Ask ONLY ONE question at a time.
+- Speak feminine language.
+- Be deeply empathetic. Acknowledge crop problems with genuine concern.
+- You only have give information from retrieved content and if retrieved conent is irrelevant then you should say "Maaf kijiye mere paas iski jaankari nahi hai hamare krishi sahayak apko jldi hi sampark karenge".
+- STRICT FORMATTING: Speak ONLY in short spoken sentences. Do NOT use bullet points, bold text, markdown, or lists. ONLY plain text.
+- Ask ONLY ONE short question at a time. Do not overwhelm the user.
 - EXPERT RULE: You MUST use tools for any technical, diagnostic, or product-related questions. Do NOT answer from your internal knowledge if a tool is available.
+- HANGUP RULE: If the user says goodbye, namaste, "phone kaat do", "band kar de raha hu", or implies they are hanging up, you MUST immediately use the `end_call` tool. Do not just output text, you MUST call the tool.
 - If you receive "__USER_SILENCE__", say: "Hello, kya aap mujhe sun pa rahe hain?"
 - If you receive "__USER_SILENCE_FINAL__", say: "Aapki aawaz nahi aa rahi hai. Main call kaat rahi hoon. Namaste!"
 """
@@ -454,42 +486,41 @@ RULES:
 GREETING_PROMPT = BASE_RULES + """
 Current Stage: GREETING & CONSENT
 When you receive "__CALL_STARTED__", greet the farmer warmly:
-- "Namaste! Main KisanVani se, aapki Krishi Sahayak bol rahi hoon. Asha karti hoon aap theek honge. (Yeh call quality ke liye record ho rahi hai). Boliye, aaj main aapki kya madad kar sakti hoon?"
-- If they ask a technical or diagnostic question immediately, USE THE `diagnose_problem` TOOL FIRST before asking for their name.
-- Otherwise, politely ask for their name: "Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"
+- "Namaste! Main KisanVani se aapki Krishi Sahayak bol rahi hoon. Boliye, aaj main aapki kya madad kar sakti hoon?"
+- FLEXIBILITY RULE: If they ask a technical or diagnostic question immediately (e.g., "Soybean me kitna protein hota hai?"), USE THE `diagnose_problem` TOOL FIRST to answer them.
+- After answering any digression, politely pivot back to profiling: "Jab tak aap batate hain, kya main aapka shubh naam jaan sakti hoon?"
 """
 
 PROFILING_PROMPT = BASE_RULES + """
 Current Stage: FARMER PROFILING
-MANDATORY TOOL RULE: Use `update_farmer_profile` tool IMMEDIATELY the moment you learn a new detail (name, village, etc.).
-KNOWLEDGE RULE: If the farmer asks a question about their crop, variety, or a disease during profiling, USE THE `diagnose_problem` TOOL IMMEDIATELY.
-
-Your goal is to learn their basic information to save in the database.
+Your primary goal is to learn their basic information to save in the database.
 Gather these specific details naturally:
 1. Name (`name`)
 2. Location (`village`, `district`, `state`)
 3. Total land size (`land_size`)
 4. The crop they planted (`crop_type`)
+
+MANDATORY TOOL RULE: Use `update_farmer_profile` tool IMMEDIATELY the moment you learn a new detail. Do not wait.
+FLEXIBILITY RULE: If the farmer interrupts with a question about their crop, variety, or a disease, USE THE `diagnose_problem` TOOL IMMEDIATELY to answer them.
+After answering, you MUST gently steer the conversation back to gathering their profile information (e.g., 'Soybean me protein 36% hota hai. Waise, aapka gaaon kaunsa hai?').
 """
 
 DIAGNOSTIC_PROMPT = BASE_RULES + """
 Current Stage: DIAGNOSTIC (CROP & PROBLEM IDENTIFICATION)
-Be like a caring doctor trying to diagnose a patient.
+Be like a caring doctor trying to diagnose a patient's crop.
 
-1. **CHROMA-BASED PROACTIVE DIAGNOSIS**:
-   - As soon as you know the crop name (e.g., 'Soybean'), use the `diagnose_problem` tool (e.g., `diagnose_problem(query="Soybean issues")`) to find common diseases/pests for that crop in the expert documents.
-   - Use the results to ask targeted questions. For example, if the tool mentions 'Yellow Mosaic Virus causes yellowing of leaves', you should ask: "Kya pattiyaan peeli pad rahi hain?" (Are the leaves turning yellow?)
-   - This helps narrow down the problem much faster than asking generic questions.
+1. **PROACTIVE DIAGNOSIS**:
+   - As soon as you know the crop name, use the `diagnose_problem` tool to find common diseases/pests for that crop in the expert documents.
+   - Use the results to ask targeted questions.
 
-2. **SYMBOLIC SYMPTOMS**:
-   - Gather critical context: `crop_age_days` (approx), `crop_area`, and `problem_area` (leaves, stem, roots).
-   - Use `update_farmer_profile` frequently to save all gathered details.
+2. **SYMBOLIC SYMPTOMS & FLEXIBILITY**:
+   - Gather critical context: crop age, crop area, and problem area.
+   - If they mention new profile details (like crop area), use `update_farmer_profile` immediately.
 
 3. **MANDATORY TOOL RULE**:
-   - If the user asks ANY question about crop diseases, pests, variety, or "how/why" questions, you MUST use the `diagnose_problem` tool immediately.
-   - DO NOT answer from your memory.
+   - If the user asks ANY question about crop diseases, pests, variety, or "how/why", you MUST use the `diagnose_problem` tool immediately. DO NOT answer from memory.
 
-4. Do NOT suggest specific products yet (that happens in the next stage).
+4. Do NOT suggest specific products yet.
 5. After a successful diagnosis from the tool, reassure the farmer with concern.
 """
 
@@ -498,10 +529,11 @@ Current Stage: ADVISORY
 You now understand the farmer's problem perfectly. 
 
 1. **PRODUCT SEARCH**: Use the `suggest_products` tool to find actual products for the diagnosed problem.
-2. **RECOMMENDATION**: Based ONLY on the retrieved product info, give clear recommendations.
+2. **RECOMMENDATION**: Based ONLY on the retrieved product info, give clear recommendations. Do not list them out with numbers. Speak them naturally in a sentence.
 3. **FLEXIBILITY**: If the farmer asks a general question (e.g., "how many diseases occur in soybean?"), use the `diagnose_problem` tool to answer first, even if you are in the advisory stage.
-4. **FALLBACK**: Only if no products OR diagnostic info are found, say: "Maaf kijiyega, hamare paas iski satik dawai ya jankari abhi nahi hai."
-5. Close by asking if they need any other help.
+4. **FALLBACK**: Only if no products OR diagnostic info are found, say: "Maaf kijiyega, is samay mere paas iski satik jankari nahi hai."
+5. **GATHER MISSING PROFILE INFO**: If you were forced to jump to this stage early, you MUST politely ask the user for their name or village if you haven't already. Use `update_farmer_profile` if they give it to you.
+6. Close by asking if they need any other help.
 """
 
 # ==========================================
@@ -517,7 +549,10 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
     cache_key = (organisation_id, company_id, llm_provider)
     if cache_key in _agent_cache:
-        return _agent_cache[cache_key]
+        # Move to end to show it was recently used
+        executor = _agent_cache.pop(cache_key)
+        _agent_cache[cache_key] = executor
+        return executor
 
     if checkpointer is None:
         await init_checkpointer()
@@ -527,11 +562,17 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     if organisation_id is None:
         profiling_tools = [update_farmer_profile]
         diagnostic_tools = [update_farmer_profile, diagnose_problem]
-        advisory_tools = [suggest_products]
+        advisory_tools = [suggest_products, update_farmer_profile, end_call]
     else:
         _diagnose_problem_fn = diagnose_problem.coroutine
         _suggest_products_fn = suggest_products.coroutine
         _update_farmer_profile_fn = update_farmer_profile.coroutine
+        _end_call_fn = end_call.coroutine
+
+        @tool("end_call")
+        async def end_call_scoped() -> str:
+            """Send a signal to immediately hang up the phone call."""
+            return await _end_call_fn()
 
         @tool("diagnose_problem")
         async def diagnose_problem_scoped(query: str) -> str:
@@ -564,23 +605,41 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
 
         profiling_tools = [update_farmer_profile_scoped]
         diagnostic_tools = [update_farmer_profile_scoped, diagnose_problem_scoped]
-        advisory_tools = [suggest_products_scoped]
+        advisory_tools = [suggest_products_scoped, update_farmer_profile_scoped, end_call_scoped]
 
-    # Initialize node LLMs with ALL staged tools to handle any query type at any time
+    # Extract unique tools into a dict for easy lookup
     all_staged_tools = profiling_tools + diagnostic_tools + advisory_tools 
-    unique_tools = []
-    seen_tool_names = set()
+    tools_by_name = {}
     for t in all_staged_tools:
-        if t.name not in seen_tool_names:
-            unique_tools.append(t)
-            seen_tool_names.add(t.name)
-    
-    # Bind the FULL toolset to EVERY node
-    # This allows the agent to diagnose during profiling, or profile during advisory.
-    greeting_llm = current_llm.bind_tools(unique_tools)
-    profiling_llm = current_llm.bind_tools(unique_tools)
-    diagnostic_llm = current_llm.bind_tools(unique_tools)
-    advisory_llm = current_llm.bind_tools(unique_tools)
+        if getattr(t, "name", None):
+            tools_by_name[t.name] = t
+
+    # We still need a master list of unique tools for the ToolNode
+    unique_tools = list(tools_by_name.values())
+
+    # Intelligently bind tools to specific nodes to prevent state confusion
+    # while allowing necessary digressions (using exact scoped functions directly where possible)
+    if organisation_id is None:
+        greeting_tools = [diagnose_problem]
+        profiling_tools_bound = [update_farmer_profile, diagnose_problem]
+        diagnostic_tools_bound = [diagnose_problem, update_farmer_profile]
+        advisory_tools_bound = [suggest_products, diagnose_problem, update_farmer_profile, end_call]
+    else:
+        greeting_tools = [diagnose_problem_scoped]
+        profiling_tools_bound = [update_farmer_profile_scoped, diagnose_problem_scoped]
+        diagnostic_tools_bound = [diagnose_problem_scoped, update_farmer_profile_scoped]
+        advisory_tools_bound = [suggest_products_scoped, diagnose_problem_scoped, update_farmer_profile_scoped, end_call_scoped]
+
+    # The end_call tool is technically bound to advisory_tools_bound, but
+    # it can also be added to greeting/profiling if the user says "hang up" early.
+    greeting_tools.append(tools_by_name["end_call"])
+    profiling_tools_bound.append(tools_by_name["end_call"])
+    diagnostic_tools_bound.append(tools_by_name["end_call"])
+
+    greeting_llm = current_llm.bind_tools(greeting_tools)
+    profiling_llm = current_llm.bind_tools(profiling_tools_bound)
+    diagnostic_llm = current_llm.bind_tools(diagnostic_tools_bound)
+    advisory_llm = current_llm.bind_tools(advisory_tools_bound)
 
     # Node Functions
     async def greeting_node(state: AgentState):
@@ -645,29 +704,14 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
         user_msg = next((m for m in reversed(messages) if isinstance(m, HumanMessage)), None)
         user_text = user_msg.content.lower() if user_msg else ""
 
-        # 2. Urgent Keywords (Bypass profiling, but MUST diagnose first)
-        urgent_keywords = [
-            "dawai", "ilaj", "upay", "medicine", "spray", "solution", "kya dalu", "kya karu", 
-            "protein", "variety", "bimari", "keeda", "keede", "pests", "yield", "pesticide",
-            "insecticide", "fertilizer", "khad", "rog"
-        ]
-        if any(word in user_text for word in urgent_keywords):
-            return "diagnostic"
-
-        # 3. Initial Start
-        if "__CALL_STARTED__" in user_text:
-            return "greeting"
-
-        # 4. Sequential Logic
-        current_stage = state.get("stage", "greeting")
-        
-        # Heuristic markers from history
-        has_name_loc = False
-        has_symptoms = False
-        
-        # Look back to see what we've accomplished
+        # 2. Look back to see what we've accomplished
         msg_debug = []
         has_diagnosis = False
+        has_crop = False
+        has_name_loc = False
+        has_symptoms = False
+
+        # Parse history more strictly to be deterministic
         for msg in messages: 
             m_type = type(msg).__name__
             t_calls = getattr(msg, "tool_calls", [])
@@ -678,26 +722,60 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
                 for tc in msg.tool_calls:
                     if tc["name"] == "update_farmer_profile":
                         args = tc.get("args") or tc.get("arguments") or {}
-                        if args.get("name") or args.get("village"):
+                        # Require core details before considering profiling 'complete'
+                        if args.get("name") and args.get("village"):
                             has_name_loc = True
+                        if args.get("crop_type"):
+                            has_crop = True
                         if args.get("problem_area") or args.get("crop_age_days"):
                             has_symptoms = True
                     if tc["name"] in ["diagnose_problem", "retrieve_context"]:
+                        # We only consider diagnosis complete if the tool actually ran
+                        # This prevents premature jumping if the LLM hallucinated
                         has_diagnosis = True
+
+        # 3. Urgent Product Keywords Bypass
+        # If the user explicitly asks for a product AND we have already diagnosed the problem,
+        # we bypass profiling entirely and jump to advisory to suggest products.
+        product_keywords = ["dawai", "ilaj", "product", "medicine", "suggest", "konsa", "kaunsa", "konsi"]
+        if any(word in user_text for word in product_keywords) and has_diagnosis:
+            logger.info("Urgent product keyword detected. Bypassing directly to advisory.")
+            return "advisory"
+
+        # 4. Urgent Diagnostic Keywords (Bypass profiling, but MUST diagnose first)
+        urgent_keywords = [
+            "upay", "spray", "solution", "kya dalu", "kya karu",
+            "protein", "variety", "bimari", "keeda", "keede", "pests", "yield", "pesticide",
+            "insecticide", "fertilizer", "khad", "rog"
+        ]
+        if any(word in user_text for word in urgent_keywords):
+            return "diagnostic"
+
+        # 5. Initial Start
+        if "__CALL_STARTED__" in user_text:
+            return "greeting"
+
+        # 6. Sequential Logic
+        current_stage = state.get("stage", "greeting")
         
-        logger.info(f"Router Debug: stage={current_stage}, has_diagnosis={has_diagnosis}, has_name_loc={has_name_loc}, has_symptoms={has_symptoms}")
+        logger.info(f"Router Debug: stage={current_stage}, has_diagnosis={has_diagnosis}, has_name_loc={has_name_loc}, has_crop={has_crop}, has_symptoms={has_symptoms}")
         
+        # Deterministic stage transitions
         if current_stage == "greeting":
             if "__call_started__" in user_text:
                 return "greeting"
             return "profiling"
             
         if current_stage == "profiling":
-            if has_name_loc: return "diagnostic"
+            # Only advance when we have basic profile AND the crop info
+            if has_name_loc and has_crop:
+                return "diagnostic"
             return "profiling"
             
         if current_stage == "diagnostic":
-            if has_diagnosis: return "advisory"
+            # Only advance when we actually attempted a diagnosis via tool
+            if has_diagnosis:
+                return "advisory"
             return "diagnostic"
             
         return current_stage
@@ -762,6 +840,11 @@ async def get_agent_executor(organisation_id: int | None = None, company_id: int
     logger.info("Compiling graph with checkpointer type: %s", cp_type)
     executor = workflow.compile(checkpointer=checkpointer)
     _agent_cache[cache_key] = executor
+    
+    if len(_agent_cache) > MAX_AGENT_CACHE_SIZE:
+        # popitem(last=False) removes the oldest key-value pair that was added/updated
+        _agent_cache.popitem(last=False)
+        
     return executor
 
 

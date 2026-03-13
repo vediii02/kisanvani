@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Tag, Search } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Search, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -175,7 +175,8 @@ export default function BrandManagement() {
       fetchBrands();
     } catch (error) {
       console.error('Error deleting brand:', error);
-      toast.error(getErrorMessage(error));
+      const errorMessage = error.response?.data?.detail || 'Failed to delete brand';
+      toast.error(typeof errorMessage === 'string' ? errorMessage : 'Failed to delete brand');
     }
   };
 

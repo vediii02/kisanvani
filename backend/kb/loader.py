@@ -77,8 +77,14 @@ class KBLoader:
 
     async def load_product_to_vector_db(self, product: Product):
         """Generates embedding for a product and saves it to knowledge_entries table."""
+        source_id = f"product:{product.id}"
+        
         if getattr(product, 'is_active', True) is False:
-            logger.warning(f"Skipping product {product.id} - not active")
+            logger.info(f"Product {product.id} is inactive. Removing from KB if exists.")
+            async with AsyncSessionLocal() as db:
+                from sqlalchemy import delete
+                await db.execute(delete(KnowledgeEntry).where(KnowledgeEntry.source == source_id))
+                await db.commit()
             return
 
         try:
@@ -111,10 +117,18 @@ class KBLoader:
                     # Update existing
                     knowledge_entry.organisation_id = product.organisation_id
                     knowledge_entry.company_id = product.company_id
+                    knowledge_entry.product_id = product.id
                     knowledge_entry.crop = getattr(product, 'target_crops', '')
                     knowledge_entry.problem_type = getattr(product, 'target_problems', '')
                     knowledge_entry.content = summary_content
                     knowledge_entry.embedding = embedding_vector
+                    knowledge_entry.metadata_ = {
+                        "brand_id": getattr(product, 'brand_id', None),
+                        "category": product.category,
+                        "sub_category": getattr(product, 'sub_category', None),
+                        "price": getattr(product, 'price', None)
+                    }
+                    knowledge_entry.language = 'hi'  # Default for this platform
                     
                     await db.commit()
                     logger.info(f"Updated existing KnowledgeEntry for product {product.id}")
@@ -123,11 +137,19 @@ class KBLoader:
                     knowledge_entry = KnowledgeEntry(
                         organisation_id=product.organisation_id,
                         company_id=product.company_id,
+                        product_id=product.id,
                         crop=getattr(product, 'target_crops', ''),
                         problem_type=getattr(product, 'target_problems', ''),
                         source=source_id,
                         content=summary_content,
-                        embedding=embedding_vector
+                        embedding=embedding_vector,
+                        metadata_={
+                            "brand_id": getattr(product, 'brand_id', None),
+                            "category": product.category,
+                            "sub_category": getattr(product, 'sub_category', None),
+                            "price": getattr(product, 'price', None)
+                        },
+                        language='hi'
                     )
                     db.add(knowledge_entry)
                     await db.commit()

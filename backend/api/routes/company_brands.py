@@ -266,6 +266,7 @@ async def get_company_products(
 @router.post("/products", response_model=ProductResponse)
 async def create_company_product(
     product_data: ProductCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -318,6 +319,9 @@ async def create_company_product(
     await db.commit()
     await db.refresh(new_product)
     
+    # Automatically generate embedding in the background
+    background_tasks.add_task(kb_loader.load_product_to_vector_db, new_product)
+    
     # Get names for response
     brand_name = None
     if new_product.brand_id:
@@ -347,6 +351,7 @@ async def create_company_product(
 async def update_company_product(
     product_id: int,
     product_data: ProductCreate,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -377,6 +382,9 @@ async def update_company_product(
     
     await db.commit()
     await db.refresh(product)
+    
+    # Automatically update embedding in the background
+    background_tasks.add_task(kb_loader.load_product_to_vector_db, product)
     
     # Get names for response
     brand_name = None
@@ -442,9 +450,9 @@ async def delete_company_product(
 
 @router.post("/products/bulk-upload")
 async def bulk_upload_products(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     company_id: Optional[str] = Form(None),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

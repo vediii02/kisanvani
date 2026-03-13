@@ -57,3 +57,12 @@ class TTSChunkEvent(VoiceAgentEvent):
     @classmethod
     def create(cls, audio: bytes):
         return cls(type="tts_chunk", audio=audio)
+
+
+class HangupEvent(VoiceAgentEvent):
+    """Agent explicitly requested to hang up the call."""
+    reason: str | None = None
+
+    @classmethod
+    def create(cls, reason: str = "agent_ended_call"):
+        return cls(type="hangup", reason=reason)
