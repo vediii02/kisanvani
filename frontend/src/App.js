@@ -35,6 +35,7 @@ import OrganisationPendingApprovals from '@/pages/OrganisationPendingApprovals';
 import SuperAdminSettings from '@/pages/SuperAdminSettings';
 import ForgotPassword from '@/pages/ForgotPassword';
 import ResetPassword from '@/pages/ResetPassword';
+import CallSimulator from '@/pages/CallSimulator';
 
 import { Menu } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -162,10 +163,16 @@ function App() {
                 </ProtectedRoute>
               }
             />
-
-
-
-
+            <Route
+              path="/superadmin/call-simulator"
+              element={
+                <ProtectedRoute requiredRole="superadmin">
+                  <AuthenticatedLayout>
+                    <CallSimulator />
+                  </AuthenticatedLayout>
+                </ProtectedRoute>
+              }
+            />
             {/* Organisation Role Routes */}
             <Route
               path="/organisation/dashboard"

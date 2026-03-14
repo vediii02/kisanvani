@@ -43,6 +43,7 @@ export default function Sidebar({ isOpen, onClose }) {
     { path: '/superadmin/call-logs', icon: Phone, label: 'Call Logs', testid: 'nav-admin-audit' },
     { path: '/superadmin/call-analytics', icon: BarChart3, label: 'Call Analytics', testid: 'nav-admin-analytics' },
     { path: '/superadmin/ai-management', icon: Brain, label: 'AI Management', testid: 'nav-admin-ai' },
+    { path: '/superadmin/call-simulator', icon: Phone, label: 'Call Simulator (Beta)', testid: 'nav-admin-simulator' },
     { path: '/superadmin/settings', icon: Settings, label: 'Settings', testid: 'nav-admin-settings' },
   ];
 

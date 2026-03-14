@@ -66,3 +66,10 @@ class HangupEvent(VoiceAgentEvent):
     @classmethod
     def create(cls, reason: str = "agent_ended_call"):
         return cls(type="hangup", reason=reason)
+
+class FillerAudioEvent(VoiceAgentEvent):
+    """Event to trigger instant filler audio for TTFB masking."""
+    
+    @classmethod
+    def create(cls):
+        return cls(type="filler_audio")

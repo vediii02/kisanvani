@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from dotenv import load_dotenv
 
 from sarvamai import AsyncSarvamAI, AudioOutput
-from services.voice.events import VoiceAgentEvent, TTSChunkEvent, BargeInEvent
+from services.voice.events import VoiceAgentEvent, TTSChunkEvent, BargeInEvent, FillerAudioEvent
 from services.voice.logger import setup_logger
 from services.config_service import get_platform_config
 
@@ -14,8 +14,10 @@ logger = setup_logger("tts_node")
 load_dotenv()
 
 class SarvamTTS:
-    def __init__(self, api_key: str = None):
+    def __init__(self, api_key: str = None, language_code: str = "hi-IN", speaker: str = "pooja"):
         self.api_key = api_key or os.getenv("SARVAM_API_KEY")
+        self.language_code = language_code
+        self.speaker = speaker
         self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
         self._ws_context = None
         self._ws = None
@@ -32,8 +34,8 @@ class SarvamTTS:
                     self._ws = await self._ws_context.__aenter__()
                     # Configure the TTS connection
                     await self._ws.configure(
-                        target_language_code="hi-IN",
-                        speaker="pooja",
+                        target_language_code=self.language_code,
+                        speaker=self.speaker,
                         speech_sample_rate=8000,
                         output_audio_codec="linear16"
                     )
@@ -97,12 +99,16 @@ class SarvamTTS:
                 logger.info("Connection closed.")
 
 class GoogleTTS:
-    def __init__(self):
+    def __init__(self, language_code: str = "hi-IN"):
         from google.cloud import texttospeech
         self._tts_module = texttospeech
         self.client = texttospeech.TextToSpeechAsyncClient()
+        
+        # Use Standard voice for non-Hindi as fallback if Wavenet-A doesn't exist
+        voice_name = f"{language_code}-Wavenet-A" if language_code == "hi-IN" else f"{language_code}-Standard-A"
+        
         self.voice = texttospeech.VoiceSelectionParams(
-            language_code="hi-IN", name="hi-IN-Wavenet-A"
+            language_code=language_code, name=voice_name
         )
         self.audio_config = texttospeech.AudioConfig(
             audio_encoding=texttospeech.AudioEncoding.LINEAR16,
@@ -145,13 +151,30 @@ async def tts_stream(
     """
     config = await get_platform_config()
     tts_provider = config.get("tts_provider", "sarvam")
+    default_lang = config.get("default_language", "hi")
+    
+    provider_lang = {
+        "hi": "hi-IN",
+        "en": "en-IN",
+        "pa": "pa-IN",
+        "mr": "mr-IN"
+    }.get(default_lang, "hi-IN")
+    
+    # Map languages to the best female Sarvam TTS voices to preserve the "KisanVani Krishi Sahayak" persona
+    sarvam_speaker_map = {
+        "hi-IN": "pooja",    # Empathetic Hindi female
+        "pa-IN": "simran",   # Warm Punjabi/conversational female
+        "mr-IN": "kavya",    # Clear everyday conversational female
+        "en-IN": "shreya"    # Authoritative English female
+    }
+    sarvam_speaker = sarvam_speaker_map.get(provider_lang, "pooja")
     
     if tts_provider == "google":
-        logger.info("Using Google TTS")
-        tts = GoogleTTS()
+        logger.info(f"Using Google TTS ({provider_lang})")
+        tts = GoogleTTS(language_code=provider_lang)
     else:
-        logger.info("Using Sarvam TTS")
-        tts = SarvamTTS()
+        logger.info(f"Using Sarvam TTS ({provider_lang} - Speaker: {sarvam_speaker})")
+        tts = SarvamTTS(language_code=provider_lang, speaker=sarvam_speaker)
 
     async def upstream_listener():
         """Consumes events from Agent/Upstream and puts them in output queue."""
@@ -161,6 +184,12 @@ async def tts_stream(
                 await tts.output_queue.put(event)
 
                 # 2. Handle specific events
+                if event.type == "filler_audio":
+                    logger.info("Playing filler audio to mask latency.")
+                    # Fast-path TTS for instant audio feedback
+                    await tts.send_text("जी, ")
+                    continue
+
                 if event.type == "barge_in":
                     logger.info("Interruption detected. Signaling TTS reset.")
                     await tts.close()

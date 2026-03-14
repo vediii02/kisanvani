@@ -22,6 +22,7 @@ from .call_metrics import CallMetrics
 from .case import Case
 from .escalation import Escalation
 from .audit import AuditLog
+from .conversation_memory import ConversationMemory
 
 __all__ = [
     "User",
@@ -44,5 +45,6 @@ __all__ = [
     "CallMetrics",
     "Case",
     "Escalation",
-    "AuditLog"
+    "AuditLog",
+    "ConversationMemory"
 ]

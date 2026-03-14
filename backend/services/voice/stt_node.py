@@ -19,10 +19,10 @@ logger = setup_logger("stt_node")
 load_dotenv()
 
 class SarvamSTT:
-    def __init__(self, sample_rate: int = 8000):
+    def __init__(self, sample_rate: int = 8000, language_code: str = "hi-IN"):
         self.api_key = os.getenv("SARVAM_API_KEY")
         self.sample_rate = sample_rate
-        self.language_code = "hi-IN"
+        self.language_code = language_code
         self.client = AsyncSarvamAI(api_subscription_key=self.api_key)
         self._ws_context = None
         self._ws = None
@@ -114,7 +114,7 @@ class SarvamSTT:
 
                 while not self._closed:
                     try:
-                        message = await asyncio.wait_for(ws.recv(), timeout=1.5)
+                        message = await asyncio.wait_for(ws.recv(), timeout=0.8)
 
                         data = getattr(message, "data", None)
                         if data and hasattr(data, "transcript"):
@@ -142,7 +142,7 @@ class SarvamSTT:
                             logger.info(f"Unknown Msg: {message}")
 
                     except asyncio.TimeoutError:
-                        # User stopped speaking for 1.5s. If we have pending text, make it final
+                        # User stopped speaking for 0.8s. If we have pending text, make it final
                         if pending_transcript:
                             logger.info(f"Silence timeout. Flushing as final: {pending_transcript}")
                             yield STTOutputEvent.create(transcript=pending_transcript)
@@ -185,16 +185,24 @@ async def stt_stream(
 
     config = await get_platform_config()
     stt_provider = config.get("stt_provider", "sarvam")
+    default_lang = config.get("default_language", "hi")
+    
+    provider_lang = {
+        "hi": "hi-IN",
+        "en": "en-IN",
+        "pa": "pa-IN",
+        "mr": "mr-IN"
+    }.get(default_lang, "hi-IN")
 
     if stt_provider == "google":
-        logger.info("Using Google STT")
+        logger.info(f"Using Google STT ({provider_lang})")
         from google.cloud import speech
 
         client = speech.SpeechAsyncClient()
         config_req = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
             sample_rate_hertz=8000,
-            language_code="hi-IN",
+            language_code=provider_lang,
             enable_automatic_punctuation=True,
         )
         streaming_config = speech.StreamingRecognitionConfig(
@@ -240,8 +248,8 @@ async def stt_stream(
             logger.error(f"Google STT Error: {e}", exc_info=True)
 
     else:
-        logger.info("Using Sarvam STT")
-        stt = SarvamSTT(sample_rate=8000)
+        logger.info(f"Using Sarvam STT ({provider_lang})")
+        stt = SarvamSTT(sample_rate=8000, language_code=provider_lang)
         
         async def send_audio_task():
             try:

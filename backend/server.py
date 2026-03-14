@@ -19,7 +19,7 @@ from api.routes import company_profile
 from api.routes import company_brands
 from api.routes import company_calls 
 from api.routes import company_stats
-from api.routes.organisations import brand_router, product_router
+from api.routes.organisations import brand_router
 from api.routes import exotel  
 from services.voice.post_call_summary import generate_post_call_summary
 
@@ -122,7 +122,7 @@ app.include_router(admin_companies.router, prefix="/api/admin", tags=["Admin - C
 app.include_router(organisations.router, prefix="/api")
 app.include_router(organisation_companies.router, prefix="/api", tags=["Organisation - Companies"])  # Multi-tenant
 app.include_router(brand_router, prefix="/api")
-app.include_router(product_router, prefix="/api")
+
 app.include_router(company_profile.router, prefix="/api/company", tags=["Company Profile"])
 app.include_router(company_brands.router, prefix="/api/company", tags=["Company Brands"])
 app.include_router(company_calls.router, prefix="/api/company", tags=["Company Calls"])
@@ -158,7 +158,8 @@ async def conversation_endpoint(websocket: WebSocket):
     farmer_row_ctx_token = set_current_farmer_row_id(None)
     
     import uuid
-    session_id = f"web_{uuid.uuid4().hex[:8]}"
+    from datetime import datetime
+    session_id = f"web_{datetime.now().timestamp()}_{uuid.uuid4().hex[:8]}"
     session_id_token = set_current_session_id(session_id)
     
     if not await call_manager.can_start_call():
@@ -167,6 +168,52 @@ async def conversation_endpoint(websocket: WebSocket):
 
     logger.info(f"Client connected to /ws/conversation - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     await call_manager.register_call(session_id)
+
+    # REPLICATE EXOTEL LOGIC: Create Farmer and CallSession so agent has a DB context
+    try:
+        from db.base import AsyncSessionLocal
+        from db.models.call_session import CallSession, CallStatus
+        from db.models.farmer import Farmer
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            farmer_id = None
+            if from_number:
+                phone_search = from_number[-10:] if len(from_number) >= 10 else from_number
+                farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
+                farmer_result = await db.execute(farmer_stmt)
+                farmer = farmer_result.scalars().first()
+                if farmer:
+                    farmer_id = farmer.id
+                else:
+                    new_farmer = Farmer(
+                        phone_number=from_number,
+                        name="Web User",
+                        language="hi"
+                    )
+                    db.add(new_farmer)
+                    await db.commit()
+                    await db.refresh(new_farmer)
+                    farmer_id = new_farmer.id
+                    logger.info(f"Created new Farmer {farmer_id} for number {from_number}")
+
+            new_call = CallSession(
+                session_id=session_id,
+                phone_number=from_number or "Unknown",
+                provider_name="web",
+                provider_call_id=session_id,
+                status=CallStatus.ACTIVE,
+                organisation_id=organisation_id,
+                from_phone=from_number,
+                to_phone="Web Simulator",
+                exotel_call_sid=session_id,
+                call_direction="inbound",
+                farmer_id=farmer_id
+            )
+            db.add(new_call)
+            await db.commit()
+            logger.info(f"Created CallSession for Web Simulator (Farmer ID: {farmer_id})")
+    except Exception as e:
+        logger.error(f"Error creating CallSession for Web Simulator: {e}")
     
     config = await get_platform_config()
     max_duration = config.get("max_call_duration_minutes", 15) * 60 # Convert to seconds
@@ -230,6 +277,33 @@ async def conversation_endpoint(websocket: WebSocket):
          reset_current_farmer_row_id(farmer_row_ctx_token)
          duration_task.cancel()
          await call_manager.unregister_call(session_id)
+
+         # REPLICATE EXOTEL LOGIC: Update CallSession to COMPLETED
+         try:
+             from db.base import AsyncSessionLocal
+             from db.models.call_session import CallSession, CallStatus
+             from sqlalchemy import select
+             from datetime import datetime, timezone
+             async with AsyncSessionLocal() as db:
+                 call_obj = (await db.execute(select(CallSession).where(CallSession.provider_call_id == session_id))).scalar_one_or_none()
+                 if call_obj:
+                     call_obj.status = CallStatus.COMPLETED
+                     call_obj.end_time = datetime.now(timezone.utc)
+                     if call_obj.start_time:
+                         call_obj.duration_seconds = int((call_obj.end_time - call_obj.start_time).total_seconds())
+                     await db.commit()
+                     logger.info(f"Updated Web CallSession {session_id} to COMPLETED")
+                     
+                     # Trigger post-call summarization
+                     asyncio.create_task(generate_post_call_summary(
+                         session_id=call_obj.session_id,
+                         provider_call_id=call_obj.provider_call_id,
+                         organisation_id=call_obj.organisation_id,
+                         company_id=company_id
+                     ))
+         except Exception as e:
+             logger.error(f"Error updating Web CallSession status: {e}")
+
          try:
              await websocket.close()
          except RuntimeError:

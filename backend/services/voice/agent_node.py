@@ -5,7 +5,7 @@ from typing import AsyncIterator
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
-from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent, HangupEvent
+from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent, HangupEvent, FillerAudioEvent
 from services.voice.llm import get_agent_executor
 from services.voice.logger import setup_logger
 from services.voice.session_context import get_current_organisation_id, get_current_company_id, get_current_session_id
@@ -75,6 +75,7 @@ async def agent_stream(
             try:
                 state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
                 messages = state.values.get("messages", [])
+
                 if messages:
                     last_msg = messages[-1]
                     if getattr(last_msg, "tool_calls", None):
@@ -285,6 +286,15 @@ async def agent_stream(
                         logger.info("Ignoring duplicate STT text: %s", text)
                         continue
                     last_stt_text = text
+                    
+                    # TTFB Masking: Instant filler audio for complex queries
+                    urgent_trigger_words = [
+                        "upay", "dawai", "ilaj", "product", "medicine", "solution", 
+                        "kya dalu", "kya karu", "bimari", "keeda", "pests", "rog"
+                    ]
+                    if any(w in text.lower() for w in urgent_trigger_words) or len(text.split()) > 3:
+                        await output_queue.put(FillerAudioEvent.create())
+
                     # New user utterance → start new AI response
                     _start_ai_task(text)
         finally:
