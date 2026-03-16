@@ -1,19 +1,41 @@
 import asyncio
 import re
 import time
+from collections import OrderedDict
 from typing import AsyncIterator
 from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
-from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent, HangupEvent, FillerAudioEvent
+from services.voice.events import VoiceAgentEvent, AgentChunkEvent, BargeInEvent, HangupEvent, FillerAudioEvent, AgentEndEvent
 from services.voice.llm import get_agent_executor
 from services.voice.logger import setup_logger
-from services.voice.session_context import get_current_organisation_id, get_current_company_id, get_current_session_id
+from services.voice.session_context import (
+    get_current_organisation_id, 
+    get_current_company_id, 
+    get_current_session_id,
+    session_state_manager
+)
 
 logger = setup_logger("agent_node")
 
+# Concurrency locks for shared module state
+_cache_lock = asyncio.Lock()
+
 # How many seconds to ignore barge-in after starting an AI response
-BARGE_IN_GRACE_PERIOD = 1.0
+BARGE_IN_GRACE_PERIOD = 0.2
+
+# Module-level caches for cross-turn optimizations
+MAX_CONTEXT_CACHE_SIZE = 200
+_context_cache: OrderedDict = OrderedDict() 
+_interrupted_threads = set() # Set of thread_ids that were interrupted and need state healing
+
+def clear_agent_context(thread_id: str):
+    """Refine 5: Cleanup cache on call end."""
+    if thread_id in _context_cache:
+        _context_cache.pop(thread_id, None)
+    if thread_id in _interrupted_threads:
+        _interrupted_threads.remove(thread_id)
+    logger.info(f"Cleared agent context for {thread_id}")
 
 
 async def agent_stream(
@@ -32,173 +54,253 @@ async def agent_stream(
     thread_id = raw_session_id or str(uuid4())
     logger.info("Agent session started. session_id (raw): %s, thread_id (used): %s", raw_session_id, thread_id)
     
-    output_queue: asyncio.Queue = asyncio.Queue()
+    # Refine 4: Bound queue size to prevent memory growth
+    output_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
     current_ai_task: asyncio.Task | None = None
     ai_response_start_time: float = 0.0  # When the current AI response started
-    async def generate_ai_response(text: str):
-        """Stream LLM response into the shared output queue, chunked by sentence."""
-        nonlocal thread_id
+    
+    async def _run_stream(executor, text, thread_id, output_queue):
+        """Internal helper to execute the LLM stream and push to output_queue."""
+        sid = get_current_session_id()
+        state = session_state_manager.get_state(sid) if sid else None
+        current_turn = state.new_turn() if state else 0
+        
         try:
-            # Dynamically resolve context for this AI response
-            # This ensures we pick up late-binding Org/Company IDs (e.g. from Exotel start event)
-            org_id = get_current_organisation_id()
-            comp_id = get_current_company_id()
-            
-            # If org_id is missing, try to recover it from session DB (safety fallback)
-            if org_id is None and thread_id:
-                try:
-                    from db.base import AsyncSessionLocal
-                    from db.models.call_session import CallSession
-                    from sqlalchemy import select
-                    from services.voice.session_context import set_current_organisation_id, set_current_company_id
-                    async with AsyncSessionLocal() as db:
-                        res = (await db.execute(
-                            select(CallSession.organisation_id, CallSession.company_id)
-                            .where(CallSession.session_id == thread_id)
-                        )).first()
-                        if res and res[0]:
-                            org_id = res[0]
-                            set_current_organisation_id(org_id)
-                            if res[1]:
-                                comp_id = res[1]
-                                set_current_company_id(comp_id)
-                            logger.info("Task recovered context from DB: org_id=%s", org_id)
-                except Exception as e:
-                    logger.warning("Agent task failed to recover context: %s", e)
-
-            executor = await get_agent_executor(org_id, comp_id)
-            
-
-            # Proactive state healing before invoking the LLM
-            # If the previous turn was interrupted during a tool call,
-            # LangGraph state will contain an AIMessage with tool_calls but no matching ToolMessage.
-            try:
-                state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
-                messages = state.values.get("messages", [])
-
-                if messages:
-                    last_msg = messages[-1]
-                    if getattr(last_msg, "tool_calls", None):
-                        logger.warning(f"Proactive state healer found dangling tool calls in message {last_msg.id}. Patching...")
-                        from langchain_core.messages import AIMessage
-                        # Overwrite the message to remove the dangling tool calls
-                        new_msg = AIMessage(
-                            content=last_msg.content or "[Action interrupted by user]",
-                            id=last_msg.id,
-                            tool_calls=[]
-                        )
-                        await executor.aupdate_state(
-                            {"configurable": {"thread_id": thread_id}},
-                            {"messages": [new_msg]}
-                        )
-                        logger.info("Successfully patched dangling tool calls before LLM invocation.")
-            except Exception as e:
-                logger.debug(f"State healer skipped (normal for new sessions): {e}")
-
+            from langchain_core.messages import HumanMessage
             stream = executor.astream(
                 {"messages": [HumanMessage(content=text)]},
                 {"configurable": {"thread_id": thread_id}},
                 stream_mode="messages",
             )
             current_sentence = ""
+            sent_first_chunk = False
             async for chunk, metadata in stream:
-                # StateGraph can emit raw strings or dicts
+                # Check for global interrupt
+                sid = get_current_session_id()
+                state = session_state_manager.get_state(sid) if sid else None
+                if state and state.is_interrupted:
+                    logger.info("Agent: Global interrupt detected. Aborting LLM stream and flushing queue.")
+                    # Drain the local queue to stop chunks from propagating
+                    while not output_queue.empty():
+                        try:
+                            output_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    break
+
                 if isinstance(chunk, str) or isinstance(chunk, dict):
                     continue
-                    
                 message = chunk
-                
-                # Only listen to messages from our actual speech nodes
                 valid_nodes = ["greeting", "profiling", "diagnostic", "advisory"]
                 if not metadata or metadata.get("langgraph_node") not in valid_nodes:
                     continue
 
-                # AIMessageChunk has .type == 'AIMessageChunk', not 'ai'
                 is_ai = hasattr(message, 'content') and 'ai' in message.type.lower()
-                
-                # Deduplicate final full message emissions
                 if getattr(message, "chunk", None) == False:
                     continue
 
-                # Detect specific tool calls for workflow control
-                is_tool = False
-                if getattr(message, 'tool_calls', None):
-                    is_tool = True
+                is_tool = bool(getattr(message, 'tool_calls', None))
+                if is_tool:
                     for tool_call in message.tool_calls:
                         if tool_call.get("name") == "end_call":
-                            logger.info("Agent decided to end the call via tool.")
                             await output_queue.put(HangupEvent.create(reason="agent_ended_call"))
                 
                 if is_ai and message.content and not is_tool:
-                    chunk = message.content
-                    if isinstance(chunk, list):
-                        chunk = "".join([
-                            c.get("text", "") for c in chunk
-                            if isinstance(c, dict) and "text" in c
-                        ])
-
-                    # Safety: strip raw function call text that some models output as plain text
-                    chunk = re.sub(r'<function=\w+>.*?</function>', '', chunk, flags=re.DOTALL)
-                    chunk = re.sub(r'<function=\w+>.*', '', chunk, flags=re.DOTALL)
-                    if not chunk.strip():
+                    content = message.content
+                    if isinstance(content, list):
+                        content = "".join([c.get("text", "") for c in content if isinstance(c, dict) and "text" in c])
+                    content = re.sub(r'<function=\w+>.*?</function>', '', content, flags=re.DOTALL)
+                    content = re.sub(r'<function=\w+>.*', '', content, flags=re.DOTALL)
+                    if not content.strip():
                         continue
-
-                    # Fast streaming chunker: pushes immediately when a sentence ends
-                    # Reduces "time to first audio" latency significantly
-                    for char in chunk:
+                        
+                    CHUNK_CHARS = {'.', '!', '?', '।', '\n', '،', ':', ';'}
+                    
+                    for char in content:
                         current_sentence += char
-                        # Trigger on common Hindi/English sentence terminators
-                        if char in {'.', '!', '?', '।', '\n'}:
+                        words = current_sentence.split()
+                        
+                        # Dynamic chunking: First chunk is small for low TTFB, subsequent chunks are larger for prosody
+                        min_words = 4 if not sent_first_chunk else 10
+                        
+                        should_chunk = (
+                            char in CHUNK_CHARS and len(words) >= 3 # require a small phrase for punct
+                        ) or (char.isspace() and len(words) >= min_words)
+                        
+                        if should_chunk:
                             sentence = current_sentence.strip()
                             if sentence:
+                                sent_first_chunk = True
                                 logger.info(f"Agent says: {sentence}")
-                                await output_queue.put(AgentChunkEvent.create(sentence))
+                                try:
+                                    output_queue.put_nowait(AgentChunkEvent.create(sentence, turn_id=current_turn))
+                                except asyncio.QueueFull:
+                                    logger.warning("Output queue full, dropping agent chunk")
                             current_sentence = ""
-
             final = current_sentence.strip()
             if final:
                 logger.info(f"Agent says (final): {final}")
-                await output_queue.put(AgentChunkEvent.create(final))
+                try:
+                    output_queue.put_nowait(AgentChunkEvent.create(final, turn_id=current_turn))
+                except asyncio.QueueFull:
+                    logger.warning("Output queue full, dropping agent chunk")
+            
+            # Signal TTS to flush after full response
+            try:
+                output_queue.put_nowait(AgentEndEvent.create())
+            except asyncio.QueueFull:
+                pass
+            
+            # Clean completion: remove from interrupted set
+            # Refine 1: Concurrency protection
+            async with _cache_lock:
+                if thread_id in _interrupted_threads:
+                    _interrupted_threads.remove(thread_id)
+                
+        except asyncio.CancelledError:
+            # Mark for state healing on next turn
+            # Refine 1: Concurrency protection
+            async with _cache_lock:
+                _interrupted_threads.add(thread_id)
+            logger.info(f"AI response cancelled (barge-in). Thread {thread_id} marked for healing.")
+            raise
+
+    async def generate_ai_response(text: str):
+        """Stream LLM response into the shared output queue, chunked by sentence."""
+        nonlocal thread_id
+        # Refine 2: Fix UnboundLocalError
+        executor = None
+        try:
+            # Fix 4: Cache DB context recovery
+            # Refine 1: Concurrency protection
+            async with _cache_lock:
+                cached = _context_cache.get(thread_id)
+            
+            if cached:
+                org_id = cached.get("org_id")
+                comp_id = cached.get("comp_id")
+                from services.voice.session_context import (
+                    set_current_organisation_id, set_current_phone_number, set_current_farmer_row_id
+                )
+                set_current_organisation_id(org_id)
+                set_current_phone_number(cached.get("phone"))
+                if cached.get("farmer_id"):
+                    set_current_farmer_row_id(cached.get("farmer_id"))
+            else:
+                org_id = get_current_organisation_id()
+                comp_id = get_current_company_id()
+                if thread_id:
+                    try:
+                        from db.base import AsyncSessionLocal
+                        from db.models.call_session import CallSession
+                        from sqlalchemy import select
+                        from services.voice.session_context import (
+                            set_current_organisation_id, set_current_company_id,
+                            set_current_phone_number, set_current_farmer_row_id
+                        )
+                        logger.info(f"Generating AI response for {thread_id}: attempting context recovery")
+                        async with asyncio.timeout(5.0): # Fix: Add specific timeout for recovery
+                            async with AsyncSessionLocal() as db:
+                                res = (await db.execute(
+                                    select(CallSession.organisation_id, CallSession.from_phone, CallSession.phone_number, CallSession.farmer_id)
+                                    .where(CallSession.session_id == thread_id)
+                                )).first()
+                                if res:
+                                    db_org_id, db_from, db_phone, db_farmer = res
+                                    if org_id is None: org_id = db_org_id
+                                    phone = db_from or db_phone
+                                    set_current_organisation_id(org_id)
+                                    if phone: set_current_phone_number(phone)
+                                    if db_farmer: set_current_farmer_row_id(int(db_farmer))
+                                    
+                                    # Fix 4: Max-size eviction to prevent memory leak
+                                    # Refine 1: Concurrency protection
+                                    async with _cache_lock:
+                                        _context_cache[thread_id] = {
+                                            "org_id": org_id,
+                                            "comp_id": comp_id,
+                                            "phone": phone,
+                                            "farmer_id": int(db_farmer) if db_farmer else None
+                                        }
+                                        if len(_context_cache) > MAX_CONTEXT_CACHE_SIZE:
+                                            _context_cache.popitem(last=False)
+                                        
+                                    logger.info(f"Context recovered and cached for {thread_id}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"Context recovery TIMEOUT for {thread_id} - proceeding with defaults")
+                    except Exception as e:
+                        logger.warning("Agent task failed to recover context: %s", e)
+
+            executor = await get_agent_executor(org_id, comp_id)
+
+            # Fix 5: Conditional state healer
+            # Refine 1: Concurrency protection
+            should_heal = False
+            async with _cache_lock:
+                should_heal = thread_id in _interrupted_threads
+
+            if should_heal:
+                logger.info(f"Thread {thread_id} marked for healing - attempting state patch")
+                try:
+                    async with asyncio.timeout(3.0): # Fix: Add timeout for healer
+                        state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
+                        messages = state.values.get("messages", [])
+                        if messages and getattr(messages[-1], "tool_calls", None):
+                            last_msg = messages[-1]
+                            logger.warning(f"Conditional healer patching dangling tool calls in {last_msg.id}")
+                            from langchain_core.messages import AIMessage
+                            new_msg = AIMessage(content=last_msg.content or "[Interrupted]", id=last_msg.id, tool_calls=[])
+                            await executor.aupdate_state({"configurable": {"thread_id": thread_id}}, {"messages": [new_msg]})
+                except asyncio.TimeoutError:
+                    logger.error(f"Healer TIMEOUT for {thread_id}")
+                except Exception as e:
+                    logger.debug(f"Healer skip: {e}")
+
+            # Fix 8: Refactored streaming logic
+            await _run_stream(executor, text, thread_id, output_queue)
         except asyncio.CancelledError:
             logger.info("AI response cancelled (barge-in)")
         except Exception as e:
+            if executor is None:
+                logger.error(f"Failed to initialize executor: {e}")
+                return
+
             error_str = str(e)
             if "tool_calls" in error_str and ("ToolMessage" in error_str or "not have response messages" in error_str or "400" in error_str or "invalid_request_error" in error_str):
-                logger.warning("Detected tool call state corruption despite proactive healer. Attempting to fix state by removing dangling tool calls.")
+                logger.warning("Detected tool call state corruption. Patching ALL dangling tool calls in one pass.")
                 try:
                     state = await executor.aget_state({"configurable": {"thread_id": thread_id}})
                     messages = state.values.get("messages", [])
                     
-                    patched = False
-                    for msg in reversed(messages):
+                    # Patch ALL messages with dangling tool calls in a single pass
+                    patches = []
+                    for msg in messages:
                         if getattr(msg, "tool_calls", None):
                             from langchain_core.messages import AIMessage
-                            # Overwrite the message to remove the dangling tool calls
-                            new_msg = AIMessage(
+                            patches.append(AIMessage(
                                 content=msg.content or "[Action interrupted by user]", 
                                 id=msg.id,
                                 tool_calls=[]
-                            )
-                            await executor.aupdate_state(
-                                {"configurable": {"thread_id": thread_id}},
-                                {"messages": [new_msg]}
-                            )
-                            logger.info(f"Successfully patched state by removing tool calls from message {msg.id}. Retrying...")
-                            patched = True
-                            await generate_ai_response(text)
-                            return
-                            
-                    if not patched:
-                        logger.warning("Could not find message with tool_calls to patch. Falling back to rotating thread_id.")
-                        thread_id = str(uuid4())
-                        await generate_ai_response(text)
-                        return
+                            ))
                     
+                    if patches:
+                        for patch in patches:
+                            try:
+                                async with asyncio.timeout(2.0):
+                                    await executor.aupdate_state(
+                                        {"configurable": {"thread_id": thread_id}},
+                                        {"messages": [patch]}
+                                    )
+                            except (asyncio.CancelledError, asyncio.TimeoutError):
+                                logger.error(f"Patch update TIMEOUT for {thread_id}")
+                                break
+                        logger.info(f"Patched {len(patches)} dangling tool call message(s). Retrying once.")
+                        # Single retry using shared helper
+                        await _run_stream(executor, text, thread_id, output_queue)
+                    else:
+                        logger.warning("No dangling tool calls found to patch. Turn may fail but session is preserved.")
                 except Exception as patch_e:
                     logger.error(f"Failed to patch state: {patch_e}", exc_info=True)
-                    logger.warning("Falling back to rotating thread_id.")
-                    thread_id = str(uuid4())
-                    await generate_ai_response(text)
             else:
                 logger.error(f"AI response error: {e}", exc_info=True)
 
@@ -232,7 +334,28 @@ async def agent_stream(
                         event = await asyncio.wait_for(anext(event_iter), timeout=timeout_duration)
                     else:
                         event = await anext(event_iter)
+                    
+                    logger.debug(f"Agent Listener: Received event type={getattr(event, 'type', 'unknown')}")
                         
+                    # Proactive VAD/GlobalState interrupt check
+                    sid = get_current_session_id()
+                    state = session_state_manager.get_state(sid) if sid else None
+                    if state and state.is_interrupted:
+                        if current_ai_task and not current_ai_task.done():
+                            logger.info("Agent Listener: Proactive interrupt from GlobalState. Cancelling AI task.")
+                            current_ai_task.cancel()
+                            try:
+                                async with asyncio.timeout(2.0): # Fix: Add timeout for cancellation cleanup
+                                    await current_ai_task # Wait for cancellation cleanup
+                            except (asyncio.CancelledError, asyncio.TimeoutError):
+                                pass
+                            # Drain output_queue to clear any residual chunks
+                            while not output_queue.empty():
+                                try:
+                                    output_queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+
                     # We received an event from STT (background noise, stt_chunk, etc)
                     # We only reset the timeout if it's actual speech output or start
                     if getattr(event, "type", "") in ["stt_output", "stt_chunk", "call_started"]:
@@ -270,6 +393,19 @@ async def agent_stream(
                     if current_ai_task and not current_ai_task.done():
                         logger.info("Barge-in: cancelling AI task")
                         current_ai_task.cancel()
+                        try:
+                            async with asyncio.timeout(2.0): # Fix: Add timeout for barge-in cancellation
+                                await current_ai_task # Await for hard cleanup
+                        except (asyncio.CancelledError, asyncio.TimeoutError):
+                            pass
+                    
+                    # Refine: Drain output_queue to prevent stale chunks from reaching TTS
+                    while not output_queue.empty():
+                        try:
+                            output_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                            
                     # Pass through for downstream (TTS needs it)
                     await output_queue.put(event)
                     continue
@@ -287,16 +423,17 @@ async def agent_stream(
                         continue
                     last_stt_text = text
                     
-                    # TTFB Masking: Instant filler audio for complex queries
+                    # Fix 6: Start AI task BEFORE sending filler to reduce overlap risk
+                    _start_ai_task(text)
+
+                    # TTFB Masking - Gate filler words on word count/triggers
                     urgent_trigger_words = [
                         "upay", "dawai", "ilaj", "product", "medicine", "solution", 
-                        "kya dalu", "kya karu", "bimari", "keeda", "pests", "rog"
+                        "kya dalu", "kya karu", "bimari", "keeda", "pests", "rog",
+                        "उपाय", "दवाई", "इलाज", "बीमारी", "कीड़ा", "रोग"
                     ]
-                    if any(w in text.lower() for w in urgent_trigger_words) or len(text.split()) > 3:
+                    if any(w in text.lower() for w in urgent_trigger_words) or len(text.split()) >= 2:
                         await output_queue.put(FillerAudioEvent.create())
-
-                    # New user utterance → start new AI response
-                    _start_ai_task(text)
         finally:
             await output_queue.put(None)
 

@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from services.voice.events import VoiceAgentEvent, STTChunkEvent, STTOutputEvent, BargeInEvent, CallStartedEvent
 from services.voice.logger import setup_logger
 from services.config_service import get_platform_config
+from services.voice.session_context import get_current_session_id, session_state_manager
 
 logger = setup_logger("stt_node")
 
@@ -30,10 +31,11 @@ class SarvamSTT:
         self._ping_task = None
         # Threshold for barge-in sensitivity (min characters)
         try:
-            self.barge_in_threshold = int(os.getenv("BARGE_IN_THRESHOLD", "10"))
+            self.barge_in_threshold = int(os.getenv("BARGE_IN_THRESHOLD", "15"))
         except ValueError:
             self.barge_in_threshold = 10
         self._closed = False
+        self._barge_in_sent = False # Fix 1: Debounce barge-in emissions
 
     async def _mark_disconnected(self):
         async with self._conn_lock:
@@ -57,23 +59,31 @@ class SarvamSTT:
                 ws_closed = getattr(self._ws._websocket, "closed", False)
 
             if self._ws is None or ws_closed:
-                logger.info(f"Connecting to SarvamAI (Rate: {self.sample_rate})...")
-                try:
-                    if self._ping_task:
-                        self._ping_task.cancel()
-                        self._ping_task = None
-                    self._ws_context = self.client.speech_to_text_streaming.connect(
-                        language_code=self.language_code,
-                        sample_rate=str(self.sample_rate),
-                        input_audio_codec="pcm_s16le"
-                    )
-                    self._ws = await self._ws_context.__aenter__()
-                    logger.info("Connected.")
-                    self._ping_task = asyncio.create_task(self._ping_loop())
-                except Exception as e:
-                    logger.error(f"Connection Failed: {e}", exc_info=True)
-                    self._ws = None # Ensure it's None on failure
-                    raise # Re-raise to let the caller handle it
+                # Fix 3: Exponential backoff for reconnections
+                retry_delay = 0.5
+                max_retries = 5
+                for attempt in range(max_retries):
+                    logger.info(f"Connecting to SarvamAI (Rate: {self.sample_rate}, Attempt {attempt+1})...")
+                    try:
+                        if self._ping_task:
+                            self._ping_task.cancel()
+                            self._ping_task = None
+                        self._ws_context = self.client.speech_to_text_streaming.connect(
+                            language_code=self.language_code,
+                            sample_rate=str(self.sample_rate),
+                            input_audio_codec="pcm_s16le"
+                        )
+                        self._ws = await self._ws_context.__aenter__()
+                        logger.info("Connected.")
+                        self._ping_task = asyncio.create_task(self._ping_loop())
+                        break 
+                    except Exception as e:
+                        logger.error(f"Connection Attempt {attempt+1} Failed: {e}")
+                        if attempt == max_retries - 1:
+                            self._ws = None
+                            raise
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 5.0)
         return self._ws
 
     async def send_audio(self, audio_chunk: bytes) -> None:
@@ -114,7 +124,8 @@ class SarvamSTT:
 
                 while not self._closed:
                     try:
-                        message = await asyncio.wait_for(ws.recv(), timeout=0.8)
+                        # Increased silence flush timeout (0.6s) for more natural speech finalization
+                        message = await asyncio.wait_for(ws.recv(), timeout=0.6)
 
                         data = getattr(message, "data", None)
                         if data and hasattr(data, "transcript"):
@@ -128,26 +139,56 @@ class SarvamSTT:
 
                             logger.info(f"Raw: {transcript} (final={is_final})")
 
-                            # Only yield BargeIn if intent is detected (at least 2 words or long enough)
+                            sid = get_current_session_id()
+                            state = session_state_manager.get_state(sid) if sid else None
+
+                            # Only yield BargeIn if intent is detected (at least 1 word or long enough)
+                            # CRITICAL: Do NOT gate on state.interrupt() return value!
+                            # VAD in server.py may have already called interrupt(), making it return False.
+                            # If we skip the BargeInEvent, TTS never gets the cleanup signal → audio overlap.
                             words = transcript.strip().split()
-                            if len(words) >= 2 or len(transcript) >= self.barge_in_threshold:
+                            if (len(words) >= 2 or len(transcript) >= self.barge_in_threshold) and not self._barge_in_sent:
+                                self._barge_in_sent = True
+                                # Set interrupt state (may already be set by VAD — that's OK)
+                                if state:
+                                    state.interrupt()
                                 yield BargeInEvent.create()
 
                             if is_final:
+                                # Reset interrupt so the next AI response is allowed to speak
+                                if state:
+                                    state.reset_interrupt()
                                 yield STTOutputEvent.create(transcript=transcript)
                                 pending_transcript = ""  # Cleared because it was final
+                                self._barge_in_sent = False # Reset for next utterance
                             else:
                                 yield STTChunkEvent.create(transcript=transcript)
                         else:
                             logger.info(f"Unknown Msg: {message}")
 
                     except asyncio.TimeoutError:
-                        # User stopped speaking for 0.8s. If we have pending text, make it final
+                        # User stopped speaking for 0.05s (very sensitive)
+                        # If a barge-in was sent, reset it so next speech works
+                        if self._barge_in_sent:
+                            logger.info("Silence timeout after barge-in. Resetting interrupt.")
+                            sid = get_current_session_id()
+                            state = session_state_manager.get_state(sid) if sid else None
+                            if state:
+                                state.reset_interrupt()
+                            self._barge_in_sent = False
+
+                        # If we have pending text, make it final
                         if pending_transcript:
                             logger.info(f"Silence timeout. Flushing as final: {pending_transcript}")
+                            # Reset interrupt so the next AI response is allowed to speak
+                            sid = get_current_session_id()
+                            state = session_state_manager.get_state(sid) if sid else None
+                            if state:
+                                state.reset_interrupt()
                             yield STTOutputEvent.create(transcript=pending_transcript)
                             pending_transcript = ""
                             last_yielded_transcript = ""  # Reset so next utterance isn't skipped if identical
+                            self._barge_in_sent = False # Reset on flush
                     except websockets.exceptions.ConnectionClosed as e:
                         logger.warning(f"Sarvam receive socket closed ({e.code}); reconnecting.")
                         await self._mark_disconnected()
@@ -222,6 +263,7 @@ async def stt_stream(
             )
             
             barge_in_threshold = int(os.getenv("BARGE_IN_THRESHOLD", "10"))
+            google_barge_in_sent = False
             
             async for response in responses:
                 if not response.results:
@@ -236,11 +278,17 @@ async def stt_stream(
                 logger.info(f"Google STT Raw: {transcript} (final={is_final})")
                 
                 words = transcript.strip().split()
-                if len(words) >= 2 or len(transcript) >= barge_in_threshold:
+                if (len(words) >= 1 or len(transcript) >= barge_in_threshold) and not google_barge_in_sent:
+                    google_barge_in_sent = True
+                    if state:
+                        state.interrupt()
                     yield BargeInEvent.create()
                 
                 if is_final:
+                    if state:
+                        state.reset_interrupt()
                     yield STTOutputEvent.create(transcript=transcript)
+                    google_barge_in_sent = False
                 else:
                     yield STTChunkEvent.create(transcript=transcript)
 
@@ -254,6 +302,7 @@ async def stt_stream(
         async def send_audio_task():
             try:
                 async for chunk in audio_stream:
+                    logger.info(f"STT: Received {len(chunk)} bytes from simulator")
                     await stt.send_audio(chunk)
             except Exception as e:
                 logger.error(f"Task Error: {e}", exc_info=True)

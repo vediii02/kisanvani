@@ -58,7 +58,7 @@ export default function SuperAdminAIManagement() {
       const normalizedData = {
         ...data,
         stt_provider: ['sarvam', 'google'].includes(data.stt_provider) ? data.stt_provider : 'google',
-        tts_provider: ['sarvam', 'google'].includes(data.tts_provider) ? data.tts_provider : 'google',
+        tts_provider: ['sarvam', 'google', 'cartesia'].includes(data.tts_provider) ? data.tts_provider : 'google',
         llm_model: ['groq', 'openai', 'gemini'].includes(data.llm_model) ? data.llm_model : 'groq',
       };
 
@@ -138,6 +138,7 @@ export default function SuperAdminAIManagement() {
             >
               <option value="sarvam">Sarvam AI</option>
               <option value="google">Google</option>
+              <option value="cartesia">Cartesia AI</option>
             </select>
           </div>
 

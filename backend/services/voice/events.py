@@ -36,10 +36,11 @@ class STTOutputEvent(VoiceAgentEvent):
 class AgentChunkEvent(VoiceAgentEvent):
     """A sentence chunk from the LLM agent, ready for TTS."""
     text: str
+    turn_id: int | None = None
 
     @classmethod
-    def create(cls, text: str):
-        return cls(type="agent_chunk", text=text)
+    def create(cls, text: str, turn_id: int | None = None):
+        return cls(type="agent_chunk", text=text, turn_id=turn_id)
 
 
 class BargeInEvent(VoiceAgentEvent):
@@ -53,10 +54,11 @@ class BargeInEvent(VoiceAgentEvent):
 class TTSChunkEvent(VoiceAgentEvent):
     """Audio bytes from TTS synthesis."""
     audio: bytes
+    turn_id: int | None = None
 
     @classmethod
-    def create(cls, audio: bytes):
-        return cls(type="tts_chunk", audio=audio)
+    def create(cls, audio: bytes, turn_id: int | None = None):
+        return cls(type="tts_chunk", audio=audio, turn_id=turn_id)
 
 
 class HangupEvent(VoiceAgentEvent):
@@ -73,3 +75,9 @@ class FillerAudioEvent(VoiceAgentEvent):
     @classmethod
     def create(cls):
         return cls(type="filler_audio")
+
+class AgentEndEvent(VoiceAgentEvent):
+    """Signals that the LLM has finished the full response for this turn."""
+    @classmethod
+    def create(cls):
+        return cls(type="agent_end")

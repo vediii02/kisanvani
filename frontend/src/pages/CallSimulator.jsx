@@ -24,6 +24,9 @@ const CallSimulator = () => {
     const wsRef = useRef(null);
     const audioContextRef = useRef(null);
     const nextPlayTimeRef = useRef(0);
+    const totalTtsBytesRef = useRef(0);
+    const totalTtsChunksRef = useRef(0);
+    const currentSourcesRef = useRef([]); // Track active TTS AudioBufferSourceNodes for hard stop on barge-in
 
     // Initialize WS URL on mount
     useEffect(() => {
@@ -93,6 +96,21 @@ const CallSimulator = () => {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             audioContextRef.current = audioContext;
 
+            // CRITICAL: Resume AudioContext immediately after user gesture (click)
+            // Browsers suspend AudioContext by default and require resume() after interaction
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+                addLog('AudioContext resumed after user gesture.', 'info');
+            }
+
+            // Create a gain node for volume control (ensures audio is audible)
+            const gainNode = audioContext.createGain();
+            gainNode.gain.value = 1.0;
+            gainNode.connect(audioContext.destination);
+
+            // Store gain node for use in playback
+            audioContextRef.current._gainNode = gainNode;
+
             mediaSource = audioContext.createMediaStreamSource(mediaStream);
             scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
@@ -135,6 +153,20 @@ const CallSimulator = () => {
                             addLog(`Agent: ${data.text}`, 'agent');
                         } else if (data.type === 'barge_in') {
                             addLog(`Agent interrupted by barge-in`, 'warning');
+                            // Stop all currently playing TTS sources immediately to prevent overlapping audio
+                            try {
+                                currentSourcesRef.current.forEach(src => {
+                                    try {
+                                        src.stop();
+                                    } catch (e) {
+                                        // ignore individual stop errors
+                                    }
+                                });
+                            } finally {
+                                currentSourcesRef.current = [];
+                            }
+                            // Reset playback schedule on barge-in so next audio plays immediately
+                            nextPlayTimeRef.current = 0;
                         } else if (data.type === 'hangup') {
                             addLog(`Call ended by server: ${data.reason}`, 'error');
                             stopCall();
@@ -146,8 +178,24 @@ const CallSimulator = () => {
                     }
                 } else {
                     // Binary audio chunk (TTS) received
+                    const ctx = audioContextRef.current;
+                    if (!ctx) return;
                     const audioData = event.data; // ArrayBuffer
-                    if (audioData.byteLength === 0) return;
+                    if (!audioData || audioData.byteLength === 0) {
+                        addLog('Received empty audio chunk (0 bytes)', 'warning');
+                        return;
+                    }
+
+                    // Ensure buffer length is even so Int16Array views are valid
+                    if (audioData.byteLength % 2 !== 0) {
+                        addLog(`Dropping malformed audio chunk (odd length=${audioData.byteLength})`, 'error');
+                        return;
+                    }
+
+                    // Ensure AudioContext is still running (can get suspended by browser tab switch)
+                    if (ctx.state === 'suspended') {
+                        try { await ctx.resume(); } catch (e) { /* ignore */ }
+                    }
 
                     try {
                         const pcm16 = new Int16Array(audioData);
@@ -156,17 +204,32 @@ const CallSimulator = () => {
                             float32[i] = pcm16[i] / (pcm16[i] < 0 ? 32768 : 32767);
                         }
 
-                        const audioBuffer = audioContextRef.current.createBuffer(1, float32.length, 8000);
+                        const audioBuffer = ctx.createBuffer(1, float32.length, 8000);
                         audioBuffer.getChannelData(0).set(float32);
 
-                        const source = audioContextRef.current.createBufferSource();
+                        const source = ctx.createBufferSource();
                         source.buffer = audioBuffer;
-                        source.connect(audioContextRef.current.destination);
+                        // Connect through gain node for reliable volume
+                        const gainNode = ctx._gainNode || ctx.destination;
+                        source.connect(gainNode);
 
-                        // Sequential playback
-                        if (nextPlayTimeRef.current < audioContextRef.current.currentTime) {
-                            nextPlayTimeRef.current = audioContextRef.current.currentTime;
+                        // Sequential playback: schedule chunks back-to-back
+                        const duration = audioBuffer.duration;
+                        totalTtsBytesRef.current += audioData.byteLength;
+                        totalTtsChunksRef.current += 1;
+                        addLog(
+                            `TTS audio received: ${audioData.byteLength} bytes (~${duration.toFixed(3)}s). ` +
+                            `Session total=${totalTtsChunksRef.current} chunks / ${totalTtsBytesRef.current} bytes.`,
+                            'info'
+                        );
+                        if (nextPlayTimeRef.current < ctx.currentTime) {
+                            nextPlayTimeRef.current = ctx.currentTime;
                         }
+                        // Track this source so we can hard-stop it on barge-in
+                        currentSourcesRef.current.push(source);
+                        source.onended = () => {
+                            currentSourcesRef.current = currentSourcesRef.current.filter(s => s !== source);
+                        };
                         source.start(nextPlayTimeRef.current);
                         nextPlayTimeRef.current += audioBuffer.duration;
 

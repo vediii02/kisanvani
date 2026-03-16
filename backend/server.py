@@ -6,6 +6,7 @@ import asyncio
 import os
 import traceback
 import logging
+from functools import partial
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -26,7 +27,7 @@ from services.voice.post_call_summary import generate_post_call_summary
 # Voice bot components
 from langchain_core.runnables import RunnableGenerator
 from services.voice.stt_node import stt_stream
-from services.voice.agent_node import agent_stream
+from services.voice.agent_node import agent_stream, clear_agent_context
 from services.voice.tts_node import tts_stream
 from services.voice.exotel_adapter import ExotelAdapter
 from services.voice.call_manager import call_manager
@@ -42,7 +43,83 @@ from services.voice.session_context import (
     reset_current_session_id,
     set_current_farmer_row_id,
     reset_current_farmer_row_id,
+    session_state_manager,
 )
+import audioop
+
+# lifecycle persistence helpers
+async def prefetch_farmer_by_phone(phone_number: str):
+    """Gap 2: Look up farmer by phone at call start to enable profile retrieval in turn 1."""
+    if not phone_number:
+        return None
+    try:
+        from db.base import AsyncSessionLocal
+        from db.models.farmer import Farmer
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            phone_search = phone_number[-10:] if len(phone_number) >= 10 else phone_number
+            result = await db.execute(
+                select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}")).order_by(Farmer.id.desc()).limit(1)
+            )
+            farmer = result.scalar_one_or_none()
+            if farmer:
+                logger.info(f"Pre-fetched farmer {farmer.id} for phone {phone_number}")
+                set_current_farmer_row_id(farmer.id)
+                return farmer.id
+    except Exception as e:
+        logger.warning(f"Farmer pre-fetch failed: {e}")
+    return None
+
+async def finalize_call_session(session_id: str, start_time: float):
+    """Gap 3: Finalize CallSession with status, duration, and end time."""
+    from datetime import datetime, timezone
+    import time
+    from sqlalchemy import update as sql_update
+    from db.base import AsyncSessionLocal
+    from db.models.call_session import CallSession, CallStatus
+    
+    duration = int(time.time() - start_time)
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                sql_update(CallSession)
+                .where(CallSession.session_id == session_id)
+                .values(
+                    status=CallStatus.COMPLETED,
+                    end_time=datetime.now(timezone.utc),
+                    duration_seconds=duration
+                )
+            )
+            await db.commit()
+            logger.info(f"Finalized CallSession {session_id} - duration: {duration}s")
+    except Exception as e:
+        logger.error(f"Error finalizing CallSession {session_id}: {e}")
+
+async def save_end_of_call_memory(session_id: str, org_id: int, company_id: int, phone_number: str):
+    """Gap 1: Persist a compact call summary to long-term memory at call end."""
+    if not phone_number:
+        return
+    try:
+        from services.voice.llm import get_agent_executor, save_conversation_memory
+        executor = await get_agent_executor(org_id, company_id)
+        state = await executor.aget_state({"configurable": {"thread_id": session_id}})
+        if not state or "messages" not in state.values:
+            return
+            
+        messages = state.values["messages"]
+        lines = []
+        for m in messages[-20:]:
+            if getattr(m, "type", "") == "human":
+                lines.append(f"Farmer: {m.content}")
+            elif getattr(m, "type", "") == "ai" and m.content.strip():
+                lines.append(f"Agent: {m.content}")
+                
+        if lines:
+            compact = "\n".join(lines)
+            logger.info(f"Saving end-of-call memory for {phone_number}")
+            await save_conversation_memory(phone_number, "call_summary", compact)
+    except Exception as e:
+        logger.warning(f"End-of-call memory save failed: {e}")
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -169,32 +246,36 @@ async def conversation_endpoint(websocket: WebSocket):
     logger.info(f"Client connected to /ws/conversation - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     await call_manager.register_call(session_id)
 
+    import time
+    start_time = time.time()
+    call_finalized = False
+    
+    session_state = session_state_manager.get_state(session_id)
+    session_state.reset_interrupt()
+
     # REPLICATE EXOTEL LOGIC: Create Farmer and CallSession so agent has a DB context
     try:
         from db.base import AsyncSessionLocal
         from db.models.call_session import CallSession, CallStatus
         from db.models.farmer import Farmer
         from sqlalchemy import select
+        
+        # Gap 2: Pre-fetch farmer
+        farmer_id = await prefetch_farmer_by_phone(from_number)
+        
         async with AsyncSessionLocal() as db:
-            farmer_id = None
-            if from_number:
-                phone_search = from_number[-10:] if len(from_number) >= 10 else from_number
-                farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
-                farmer_result = await db.execute(farmer_stmt)
-                farmer = farmer_result.scalars().first()
-                if farmer:
-                    farmer_id = farmer.id
-                else:
-                    new_farmer = Farmer(
-                        phone_number=from_number,
-                        name="Web User",
-                        language="hi"
-                    )
-                    db.add(new_farmer)
-                    await db.commit()
-                    await db.refresh(new_farmer)
-                    farmer_id = new_farmer.id
-                    logger.info(f"Created new Farmer {farmer_id} for number {from_number}")
+            if not farmer_id and from_number:
+                new_farmer = Farmer(
+                    phone_number=from_number,
+                    name="Web User",
+                    language="hi"
+                )
+                db.add(new_farmer)
+                await db.commit()
+                await db.refresh(new_farmer)
+                farmer_id = new_farmer.id
+                set_current_farmer_row_id(farmer_id)
+                logger.info(f"Created new Farmer {farmer_id} for number {from_number}")
 
             new_call = CallSession(
                 session_id=session_id,
@@ -229,11 +310,31 @@ async def conversation_endpoint(websocket: WebSocket):
     duration_task = asyncio.create_task(_duration_enforcer())
     
     async def websocket_audio_stream():
+        # VAD state & AI Activity Monitor
+        vad_threshold = int(os.getenv("VAD_THRESHOLD", "3000"))
+        vad_consecutive_frames = 0
+        vad_trigger_count = int(os.getenv("VAD_TRIGGER_COUNT", "10")) # 10 frames of 20ms = 200ms
+        import audioop
+
         try:
             while True:
                 try:
                     data = await asyncio.wait_for(websocket.receive_bytes(), timeout=2.0)
-                    yield data
+                    if data:
+                        # VAD Check
+                        rms = audioop.rms(data, 2)
+                        # AI Activity Monitor: Only interrupt if AI was speaking recently (last 2s)
+                        ai_is_active = (time.monotonic() - session_state.last_ai_audio_time) < 2.0
+                        
+                        if rms > vad_threshold:
+                            vad_consecutive_frames += 1
+                            if vad_consecutive_frames >= vad_trigger_count and not session_state.is_interrupted and ai_is_active:
+                                logger.info(f"Simulator VAD: Speech detected (RMS: {rms}). Interrupting.")
+                                session_state.interrupt()
+                        else:
+                            vad_consecutive_frames = 0
+                        # logger.debug(f"Received {len(data)} bytes audio (RMS: {rms})")
+                        yield data
                 except asyncio.TimeoutError:
                     yield b'\x00' * 1600
         except WebSocketDisconnect:
@@ -242,19 +343,48 @@ async def conversation_endpoint(websocket: WebSocket):
             logger.error(f"WebSocket read error: {e}")
 
     try:
-        output_stream = pipeline.atransform(websocket_audio_stream())
+        tts_provider_override = websocket.query_params.get("tts_provider")
+        
+        # Build the Conversational Voice Agent Pipeline with potential override
+        pipeline_with_override = (
+            RunnableGenerator(stt_stream)
+            | RunnableGenerator(agent_stream)
+            | RunnableGenerator(partial(tts_stream, tts_provider=tts_provider_override))
+        )
+        output_stream = pipeline_with_override.atransform(websocket_audio_stream())
+        
+        playback_interrupted = False
+        turn_tts_bytes = 0
+        turn_tts_chunks = 0
         async for event in output_stream:
+            # logger.info(f"Pipeline Event: {event.type if event else 'None'}")
             try:
                 if event.type == "barge_in":
+                    playback_interrupted = True
                     await websocket.send_json({"type": "barge_in"})
-                elif event.type == "stt_chunk":
-                    await websocket.send_json({"type": "stt_chunk", "transcript": event.transcript})
                 elif event.type == "stt_output":
                     logger.info(f"User said: {event.transcript}")
                     await websocket.send_json({"type": "stt_output", "transcript": event.transcript})
+                elif event.type == "stt_chunk":
+                    await websocket.send_json({"type": "stt_chunk", "transcript": event.transcript})
                 elif event.type == "agent_chunk":
+                    session_state.reset_interrupt()
+                    playback_interrupted = False
                     await websocket.send_json({"type": "agent_chunk", "text": event.text})
                 elif event.type == "tts_chunk":
+                    if session_state.is_interrupted:
+                        continue
+                    
+                    # Turn Isolation: Drop stale chunks from previous turns
+                    event_turn = getattr(event, 'turn_id', None)
+                    if event_turn is not None and event_turn < session_state.turn_id:
+                        logger.warning(f"Dropping stale audio from turn {event_turn} (Current: {session_state.turn_id})")
+                        continue
+                    
+                    # Update activity monitor
+                    session_state.last_ai_audio_time = time.monotonic()
+                    turn_tts_chunks += 1
+                    turn_tts_bytes += len(event.audio or b"")
                     await websocket.send_bytes(event.audio)
                 elif event.type == "hangup":
                     logger.info(f"Hangup detected: {event.reason}. Closing connection.")
@@ -268,46 +398,37 @@ async def conversation_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         logger.info("Client disconnected abruptly.")
     except Exception as e:
-         logger.error(f"Pipeline execution error: {e}", exc_info=True)
+        logger.error(f"Pipeline execution error: {e}", exc_info=True)
     finally:
-         reset_current_organisation_id(session_ctx_token)
-         reset_current_company_id(company_ctx_token)
-         reset_current_phone_number(phone_ctx_token)
-         reset_current_session_id(session_id_token)
-         reset_current_farmer_row_id(farmer_row_ctx_token)
-         duration_task.cancel()
-         await call_manager.unregister_call(session_id)
+        reset_current_organisation_id(session_ctx_token)
+        reset_current_company_id(company_ctx_token)
+        reset_current_phone_number(phone_ctx_token)
+        reset_current_session_id(session_id_token)
+        reset_current_farmer_row_id(farmer_row_ctx_token)
+        duration_task.cancel()
+        await call_manager.unregister_call(session_id)
+        session_state_manager.remove_state(session_id)
 
-         # REPLICATE EXOTEL LOGIC: Update CallSession to COMPLETED
-         try:
-             from db.base import AsyncSessionLocal
-             from db.models.call_session import CallSession, CallStatus
-             from sqlalchemy import select
-             from datetime import datetime, timezone
-             async with AsyncSessionLocal() as db:
-                 call_obj = (await db.execute(select(CallSession).where(CallSession.provider_call_id == session_id))).scalar_one_or_none()
-                 if call_obj:
-                     call_obj.status = CallStatus.COMPLETED
-                     call_obj.end_time = datetime.now(timezone.utc)
-                     if call_obj.start_time:
-                         call_obj.duration_seconds = int((call_obj.end_time - call_obj.start_time).total_seconds())
-                     await db.commit()
-                     logger.info(f"Updated Web CallSession {session_id} to COMPLETED")
-                     
-                     # Trigger post-call summarization
-                     asyncio.create_task(generate_post_call_summary(
-                         session_id=call_obj.session_id,
-                         provider_call_id=call_obj.provider_call_id,
-                         organisation_id=call_obj.organisation_id,
-                         company_id=company_id
-                     ))
-         except Exception as e:
-             logger.error(f"Error updating Web CallSession status: {e}")
+        # Gap 3: Finalize CallSession
+        if not call_finalized:
+            await finalize_call_session(session_id, start_time)
+            call_finalized = True
 
-         try:
-             await websocket.close()
-         except RuntimeError:
-             pass
+        # Gap 1: Save memory
+        asyncio.create_task(save_end_of_call_memory(session_id, organisation_id, company_id, from_number))
+        
+        # Trigger post-call summarization
+        asyncio.create_task(generate_post_call_summary(
+            session_id=session_id,
+            provider_call_id=session_id,
+            organisation_id=organisation_id,
+            company_id=company_id
+        ))
+
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 @app.websocket("/ws/exotel")
 async def exotel_ws_endpoint(websocket: WebSocket):
@@ -336,6 +457,10 @@ async def exotel_ws_endpoint(websocket: WebSocket):
 
     logger.info(f"Exotel connected to /ws/exotel - org: {organisation_id}, company: {company_id}, phone: {from_number}")
     await call_manager.register_call(session_id)
+    
+    import time
+    start_time = time.time()
+    call_finalized = False
 
     config = await get_platform_config()
     max_duration = config.get("max_call_duration_minutes", 15) * 60 # Convert to seconds
@@ -352,6 +477,8 @@ async def exotel_ws_endpoint(websocket: WebSocket):
     
     adapter = ExotelAdapter()
     call_active = True
+    session_state = session_state_manager.get_state(session_id)
+    session_state.reset_interrupt()
     audio_queue: asyncio.Queue[tuple[str, str | bytes] | None] = asyncio.Queue(maxsize=256)
 
     async def _queue_audio(chunk: bytes) -> None:
@@ -451,20 +578,23 @@ async def exotel_ws_endpoint(websocket: WebSocket):
             farmer_row_ctx_token = set_current_farmer_row_id(None)
             logger.info(f"Phone number updated from Exotel: {from_number}")
 
+        # Gap 2: Pre-fetch farmer by phone immediately if we have it
+        farmer_id = await prefetch_farmer_by_phone(from_number)
+
         try:
             from db.base import AsyncSessionLocal
             from db.models.call_session import CallSession, CallStatus
             from db.models.farmer import Farmer
             from sqlalchemy import select
             async with AsyncSessionLocal() as db:
-                farmer_id = None
-                if adapter.from_number:
+                if not farmer_id and adapter.from_number:
                     phone_search = adapter.from_number[-10:] if len(adapter.from_number) >= 10 else adapter.from_number
                     farmer_stmt = select(Farmer).where(Farmer.phone_number.like(f"%{phone_search}"))
                     farmer_result = await db.execute(farmer_stmt)
                     farmer = farmer_result.scalars().first()
                     if farmer:
                         farmer_id = farmer.id
+                        set_current_farmer_row_id(farmer_id)
                     else:
                         new_farmer = Farmer(
                             phone_number=adapter.from_number,
@@ -475,6 +605,7 @@ async def exotel_ws_endpoint(websocket: WebSocket):
                         await db.commit()
                         await db.refresh(new_farmer)
                         farmer_id = new_farmer.id
+                        set_current_farmer_row_id(farmer_id)
                         logger.info(f"Created new Farmer {farmer_id} for number {adapter.from_number}")
 
                 new_call = CallSession(
@@ -496,31 +627,33 @@ async def exotel_ws_endpoint(websocket: WebSocket):
         except Exception as e:
             logger.error(f"Error creating CallSession: {e}")
 
-    async def exotel_reader():
-        nonlocal call_active
+        # VAD state & AI Activity Monitor
+        vad_threshold = int(os.getenv("VAD_THRESHOLD", "3000"))
+        vad_consecutive_frames = 0
+        vad_trigger_count = int(os.getenv("VAD_TRIGGER_COUNT", "10")) # 10 frames of 20ms = 200ms
+        import audioop
+
         try:
             while call_active:
                 try:
                     message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
                     event, pcm_bytes = adapter.parse_message(message)
-
-                    if event == "connected":
-                        continue
-                    if event == "start":
-                        try:
-                            audio_queue.put_nowait(("start", message))
-                        except asyncio.QueueFull:
-                            pass
-                        continue
-                    if event == "stop":
-                        logger.info("Exotel sent stop event")
-                        try:
-                            audio_queue.put_nowait(("stop", ""))
-                        except asyncio.QueueFull:
-                            pass
-                        call_active = False
-                        break
+                    
                     if pcm_bytes:
+                        # VAD Check
+                        rms = audioop.rms(pcm_bytes, 2)
+                        # AI Activity Monitor: Only interrupt if AI was speaking recently (last 2s)
+                        # This avoids background noise killing the thinking phase.
+                        ai_is_active = (time.monotonic() - session_state.last_ai_audio_time) < 2.0
+                        
+                        if rms > vad_threshold:
+                            vad_consecutive_frames += 1
+                            if vad_consecutive_frames >= vad_trigger_count and not session_state.is_interrupted and ai_is_active:
+                                logger.info(f"VAD: Speech detected (RMS: {rms}). Interrupting playback.")
+                                session_state.interrupt()
+                        else:
+                            vad_consecutive_frames = 0
+
                         await _queue_audio(pcm_bytes)
 
                 except asyncio.TimeoutError:
@@ -570,15 +703,42 @@ async def exotel_ws_endpoint(websocket: WebSocket):
 
     try:
         output_stream = pipeline.atransform(exotel_audio_stream())
+        playback_interrupted = False
         async for event in output_stream:
             if not call_active:
                 break
             try:
                 if event.type == "barge_in":
+                    session_state.interrupt()
+                    playback_interrupted = True
+                    # Proactive: Clear internal adapter buffers if any
+                    while not audio_queue.empty():
+                        try:
+                            audio_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
                     msg = adapter.format_barge_in_message()
                     if msg:
                         await websocket.send_text(msg)
+                elif event.type == "stt_output":
+                    # STT finished, but we keep interrupted=True until agent starts new turn
+                    pass 
+                elif event.type == "agent_chunk":
+                    session_state.reset_interrupt()
+                    playback_interrupted = False
                 elif event.type == "tts_chunk":
+                    if playback_interrupted or session_state.is_interrupted:
+                        continue
+                    
+                    # Turn Isolation: Drop stale chunks from previous turns
+                    event_turn = getattr(event, 'turn_id', None)
+                    if event_turn is not None and event_turn < session_state.turn_id:
+                        logger.warning(f"Dropping stale audio from turn {event_turn} (Current: {session_state.turn_id})")
+                        continue
+                        
+                    # Update activity monitor
+                    session_state.last_ai_audio_time = time.monotonic()
+                    
                     exotel_msg = adapter.format_audio_message(event.audio)
                     if exotel_msg:
                         await websocket.send_text(exotel_msg)
@@ -591,47 +751,38 @@ async def exotel_ws_endpoint(websocket: WebSocket):
             except Exception as e:
                 logger.error(f"Error sending to Exotel: {e}")
     except Exception as e:
-         logger.error(f"Exotel Pipeline execution error: {e}", exc_info=True)
+        logger.error(f"Exotel Pipeline execution error: {e}", exc_info=True)
     finally:
-         reset_current_organisation_id(session_ctx_token)
-         reset_current_company_id(company_ctx_token)
-         reset_current_phone_number(phone_ctx_token)
-         reset_current_session_id(session_id_token)
-         reset_current_farmer_row_id(farmer_row_ctx_token)
-         duration_task.cancel()
-         await call_manager.unregister_call(session_id)
-         
-         # Update CallSession to COMPLETED
-         try:
-             from db.base import AsyncSessionLocal
-             from db.models.call_session import CallSession, CallStatus
-             from sqlalchemy import select
-             from datetime import datetime, timezone
-             if adapter and adapter.call_sid:
-                 async with AsyncSessionLocal() as db:
-                     call_obj = (await db.execute(select(CallSession).where(CallSession.provider_call_id == adapter.call_sid))).scalar_one_or_none()
-                     if call_obj:
-                         call_obj.status = CallStatus.COMPLETED
-                         call_obj.end_time = datetime.now(timezone.utc)
-                         if call_obj.start_time:
-                             call_obj.duration_seconds = int((call_obj.end_time - call_obj.start_time).total_seconds())
-                         await db.commit()
-                         logger.info(f"Updated CallSession {adapter.call_sid} to COMPLETED")
-                         
-                         # Trigger post-call summarization
-                         asyncio.create_task(generate_post_call_summary(
-                             session_id=call_obj.session_id,
-                             provider_call_id=call_obj.provider_call_id,
-                             organisation_id=call_obj.organisation_id,
-                             company_id=company_id
-                         ))
-         except Exception as e:
-             logger.error(f"Error updating CallSession status: {e}")
+        reset_current_organisation_id(session_ctx_token)
+        reset_current_company_id(company_ctx_token)
+        reset_current_phone_number(phone_ctx_token)
+        reset_current_session_id(session_id_token)
+        reset_current_farmer_row_id(farmer_row_ctx_token)
+        duration_task.cancel()
+        await call_manager.unregister_call(session_id)
+        session_state_manager.remove_state(session_id)
+        
+        # Gap 3: Finalize CallSession
+        if not call_finalized:
+            await finalize_call_session(session_id, start_time)
+            call_finalized = True
 
-         try:
-             await websocket.close()
-         except RuntimeError:
-             pass
+        # Gap 1: Save memory
+        asyncio.create_task(save_end_of_call_memory(session_id, organisation_id, company_id, from_number))
+
+        # Trigger post-call summarization
+        if adapter and adapter.call_sid:
+            asyncio.create_task(generate_post_call_summary(
+                session_id=session_id,
+                provider_call_id=adapter.call_sid,
+                organisation_id=organisation_id,
+                company_id=company_id
+            ))
+
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass
 
 
 @app.get("/api/")

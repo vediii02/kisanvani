@@ -7,6 +7,7 @@ from db.base import AsyncSessionLocal
 from db.models.call_session import CallSession
 from db.models.call_summary import CallSummary
 from db.models.call_metrics import CallMetrics, CallOutcome
+from db.models.call_transcript import CallTranscript, Speaker
 
 # Using Groq/OpenAI/Gemini based on platform config natively
 from services.voice.llm import get_llm, get_agent_executor
@@ -112,8 +113,28 @@ async def generate_post_call_summary(session_id: str, provider_call_id: str, org
             )
             db.add(metrics)
             
+            # Create CallTranscripts from message history
+            for m in messages:
+                speaker_type = None
+                if getattr(m, 'type', '') == 'human':
+                    speaker_type = Speaker.FARMER
+                elif getattr(m, 'type', '') == 'ai' and m.content.strip():
+                    speaker_type = Speaker.AI
+                
+                if speaker_type:
+                    # Determine language (best guess from content or default)
+                    lang = "hi-IN"
+                    
+                    transcript_entry = CallTranscript(
+                        call_session_id=call_obj.id,
+                        speaker=speaker_type,
+                        transcript_text=m.content,
+                        language_code=lang
+                    )
+                    db.add(transcript_entry)
+            
             await db.commit()
-            logger.info(f"Successfully generated post-call summary and metrics for {session_id}")
+            logger.info(f"Successfully generated post-call summary, metrics, and transcripts for {session_id}")
 
     except Exception as e:
         logger.error(f"Error generating post-call summary for {session_id}: {e}", exc_info=True)

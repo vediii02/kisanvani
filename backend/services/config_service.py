@@ -73,6 +73,7 @@ def invalidate_config_cache():
 def _default_config() -> dict:
     return {
         "stt_provider": "sarvam",
+        # Default TTS is Sarvam, but can be overridden from DB to 'google' for fallback/A-B testing
         "tts_provider": "sarvam",
         "llm_model": "groq",
         "default_language": "hi",
