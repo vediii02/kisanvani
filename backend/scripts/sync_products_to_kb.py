@@ -73,6 +73,14 @@ async def sync_products_to_knowledge():
                     kn_entry.problem_type = p.get('target_problems','')
                     kn_entry.content = summary_content
                     kn_entry.embedding = embedding_vector
+                    kn_entry.metadata_ = {
+                        "brand_id": p.get('brand_id'),
+                        "category": p.get('category'),
+                        "sub_category": p.get('sub_category'),
+                        "price": p.get('price'),
+                        "price_range": p.get('price_range')
+                    }
+                    kn_entry.language = 'hi'
                     logger.info(f"Updated product entry in KB: {p_name}")
                 else:
                     kn_entry = KnowledgeEntry(
@@ -82,7 +90,15 @@ async def sync_products_to_knowledge():
                         problem_type=p.get('target_problems',''),
                         source=source_id,
                         content=summary_content,
-                        embedding=embedding_vector
+                        embedding=embedding_vector,
+                        metadata_={
+                            "brand_id": p.get('brand_id'),
+                            "category": p.get('category'),
+                            "sub_category": p.get('sub_category'),
+                            "price": p.get('price'),
+                            "price_range": p.get('price_range')
+                        },
+                        language='hi'
                     )
                     session.add(kn_entry)
                     logger.info(f"Created new product entry in KB: {p_name}")

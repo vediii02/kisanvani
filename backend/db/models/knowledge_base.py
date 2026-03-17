@@ -8,7 +8,6 @@ class KnowledgeEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     organisation_id = Column(Integer, ForeignKey("organisations.id", ondelete="CASCADE"), nullable=False, index=True)
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True, index=True)
-    product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=True, index=True)
     crop = Column(String(100), index=True)
     problem_type = Column(String(100), index=True)
     source = Column(String(255))

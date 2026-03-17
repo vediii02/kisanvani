@@ -117,7 +117,6 @@ class KBLoader:
                     # Update existing
                     knowledge_entry.organisation_id = product.organisation_id
                     knowledge_entry.company_id = product.company_id
-                    knowledge_entry.product_id = product.id
                     knowledge_entry.crop = getattr(product, 'target_crops', '')
                     knowledge_entry.problem_type = getattr(product, 'target_problems', '')
                     knowledge_entry.content = summary_content
@@ -126,7 +125,8 @@ class KBLoader:
                         "brand_id": getattr(product, 'brand_id', None),
                         "category": product.category,
                         "sub_category": getattr(product, 'sub_category', None),
-                        "price": getattr(product, 'price', None)
+                        "price": getattr(product, 'price', None),
+                        "price_range": getattr(product, 'price_range', None)
                     }
                     knowledge_entry.language = 'hi'  # Default for this platform
                     
@@ -137,7 +137,6 @@ class KBLoader:
                     knowledge_entry = KnowledgeEntry(
                         organisation_id=product.organisation_id,
                         company_id=product.company_id,
-                        product_id=product.id,
                         crop=getattr(product, 'target_crops', ''),
                         problem_type=getattr(product, 'target_problems', ''),
                         source=source_id,
@@ -147,7 +146,8 @@ class KBLoader:
                             "brand_id": getattr(product, 'brand_id', None),
                             "category": product.category,
                             "sub_category": getattr(product, 'sub_category', None),
-                            "price": getattr(product, 'price', None)
+                            "price": getattr(product, 'price', None),
+                            "price_range": getattr(product, 'price_range', None)
                         },
                         language='hi'
                     )

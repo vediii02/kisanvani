@@ -51,7 +51,6 @@ async def test_loader_sync_logic():
             args, kwargs = mock_db.add.call_args
             entry = args[0]
             assert isinstance(entry, KnowledgeEntry)
-            assert entry.product_id == 123
             assert entry.metadata_['category'] == "pesticide"
             assert entry.metadata_['brand_id'] == 3
             assert entry.language == 'hi'
